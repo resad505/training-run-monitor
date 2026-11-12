@@ -13,7 +13,7 @@ Local checklist (git-ignored). Tick items as they land.
 ## Issues
 
 - [x] #8 Scaffold Vite + Tailwind + Vitest toolchain
-- [ ] #9 CI quality gate (lint, test, build)
+- [x] #9 CI quality gate (lint, test, build)
 - [ ] #10 Deterministic seeded run generator with corruption injection
 - [ ] #11 Sanitizer: sort, dedupe, flag anomalies, emit columnar output
 - [ ] #12 Linear and safe-log scales with truthful ticks
@@ -41,7 +41,7 @@ Local checklist (git-ignored). Tick items as they land.
 - [x] `chore(setup): scaffold vite project with pinned node version`
 - [x] `chore(setup): add tailwind and base design tokens`
 - [x] `chore(setup): add vitest, eslint and prettier`
-- [ ] `ci: run lint, test and build on pull requests`
+- [x] `ci: run lint, test and build on pull requests`
 - [ ] PR: `chore(setup): project scaffold and CI quality gate`
 - [ ] Gate: clean clone passes lint, test, build; CI green; `main` protected
 
