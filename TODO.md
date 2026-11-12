@@ -42,8 +42,8 @@ Local checklist (git-ignored). Tick items as they land.
 - [x] `chore(setup): add tailwind and base design tokens`
 - [x] `chore(setup): add vitest, eslint and prettier`
 - [x] `ci: run lint, test and build on pull requests`
-- [ ] PR: `chore(setup): project scaffold and CI quality gate`
-- [ ] Gate: clean clone passes lint, test, build; CI green; `main` protected
+- [x] PR: `chore(setup): project scaffold and CI quality gate`
+- [x] Gate: clean clone passes lint, test, build; CI green; `main` protected
 
 ## Branch 2 — `feat/data-pipeline` (#10, #11)
 
