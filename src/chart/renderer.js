@@ -110,17 +110,18 @@ export function computeEMA(steps, values, weight = 0.8) {
 
 const DEFAULT_MARGINS = { top: 20, right: 30, bottom: 40, left: 60 }
 
-/** EMA of the raw series, cached per (values buffer, weight). */
+/** EMA of the raw series, cached per values buffer for the weight last used. */
 const emaCache = new WeakMap()
 
 function rawEMA(series, weight) {
-  let byWeight = emaCache.get(series.values)
-  if (!byWeight) {
-    byWeight = new Map()
-    emaCache.set(series.values, byWeight)
+  // Only the latest weight is kept: a smoothing slider would otherwise leave
+  // one full-length copy of the series behind for every value it passed.
+  let cached = emaCache.get(series.values)
+  if (!cached || cached.weight !== weight) {
+    cached = { weight, ema: computeEMA(series.steps, series.values, weight) }
+    emaCache.set(series.values, cached)
   }
-  if (!byWeight.has(weight)) byWeight.set(weight, computeEMA(series.steps, series.values, weight))
-  return byWeight.get(weight)
+  return cached.ema
 }
 
 /**

@@ -269,3 +269,63 @@ describe('renderChart — markers, envelope, smoothing, axes', () => {
     expect(ctx.calls.some((c) => c.method === 'clip')).toBe(true)
   })
 })
+
+describe('renderChart — user-selectable scale and smoothing', () => {
+  const steps = Float64Array.from({ length: 40 }, (_, i) => i)
+  // Decays to exactly zero and dips negative: both are impossible on a log axis.
+  const values = Float64Array.from(steps, (i) => (i === 20 ? 0 : i === 30 ? -0.5 : 4 * Math.exp(-i / 8) + 0.01))
+  const series = { steps, values, anomaly: new Uint8Array(40) }
+
+  it('log scale: zeros and negatives are marked, never clamped onto the axis', () => {
+    const ctx = createMockContext()
+    const { yScale, decimated } = renderChart(ctx, series, { width: 400, height: 300, scaleType: 'log' })
+
+    // The gate in the mock context has already rejected any non-finite path.
+    expect(yScale.type).toBe('log')
+    expect(yScale.domain[0]).toBeGreaterThan(0)
+    expect(yScale.scale(0)).toBeNull()
+    expect(yScale.scale(-0.5)).toBeNull()
+    // Both points are still in the data handed to the renderer...
+    expect(Array.from(decimated.values)).toContain(0)
+    expect(Array.from(decimated.values)).toContain(-0.5)
+    // ...and each gets its own "≤0" badge instead of a point on the line.
+    const badges = ctx.calls.filter((call) => call.method === 'fillText' && call.args[0] === '≤0')
+    expect(badges).toHaveLength(2)
+  })
+
+  it('log scale: the line is broken at an unplottable value, not drawn through it', () => {
+    const linear = createMockContext()
+    const log = createMockContext()
+    renderChart(linear, series, { width: 400, height: 300, scaleType: 'linear', smoothing: 0 })
+    renderChart(log, series, { width: 400, height: 300, scaleType: 'log', smoothing: 0 })
+
+    const strokes = (ctx) => ctx.calls.filter((call) => call.method === 'stroke').length
+    expect(strokes(log)).toBeGreaterThan(strokes(linear))
+  })
+
+  it('smoothing 0 draws the raw series only', () => {
+    const result = renderChart(createMockContext(), series, { width: 400, height: 300, smoothing: 0 })
+
+    expect(result.smoothed).toBeNull()
+  })
+
+  it('changing the smoothing weight changes the curve and is reversible', () => {
+    const draw = (smoothing) =>
+      Array.from(renderChart(createMockContext(), series, { width: 400, height: 300, smoothing }).smoothed)
+
+    const light = draw(0.5)
+    const heavy = draw(0.9)
+    expect(heavy).not.toEqual(light)
+    // Heavier smoothing lags further behind the decaying raw value.
+    expect(heavy[10]).toBeGreaterThan(light[10])
+    expect(draw(0.5)).toEqual(light)
+  })
+
+  it('smoothing never alters the raw values that are drawn', () => {
+    const raw = (smoothing) =>
+      Array.from(renderChart(createMockContext(), series, { width: 400, height: 300, smoothing }).decimated.values)
+
+    expect(raw(0.95)).toEqual(raw(0))
+    expect(raw(0)).toEqual(Array.from(values))
+  })
+})

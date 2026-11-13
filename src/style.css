@@ -50,6 +50,16 @@ h3 { color: #172033; font-size: 1rem; margin: 0; }
 .anomaly-note { color: #53617a; font-size: 0.72rem; }
 .metric-card-heading span.non-finite-count { color: #be123c; font-weight: 700; }
 #run-body.is-stale { opacity: 0.55; }
+.chart-controls { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 12px 32px; margin-bottom: 16px; }
+.segmented { border: 0; display: flex; align-items: center; gap: 14px; margin: 0; padding: 0; }
+.segmented legend, .slider-control label { color: #53617a; float: left; font-size: 0.78rem; font-weight: 700; margin-right: 14px; padding: 0; }
+.segmented label { align-items: center; color: #172033; display: inline-flex; font-size: 0.85rem; gap: 6px; }
+.segmented input, .slider-control input { accent-color: #1d4ed8; }
+.segmented input:focus-visible, .slider-control input:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+.slider-control { display: grid; gap: 4px; min-width: min(100%, 280px); }
+.slider-control label { float: none; margin: 0; }
+.slider-control output { color: #172033; }
+.slider-control .muted { font-size: 0.72rem; }
 .metric-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
 .metric-card, .chart-card { background: #fff; border: 1px solid #dce3ee; border-radius: 14px; padding: 16px; }
 .metric-card-heading span, .chart-heading span { color: #53617a; font-size: 0.72rem; }

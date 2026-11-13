@@ -12,9 +12,12 @@ import {
   ANOMALY_KINDS,
   anomalyCount,
   countAnomaliesByKind,
+  countNonPositive,
+  describeChartMode,
   filterAndSortRuns,
   METRICS,
   nextOptionIndex,
+  SMOOTHING,
   summarizeMetric,
 } from './dashboard.js'
 import { createRunSelectionController } from './run-loader.js'
@@ -26,6 +29,8 @@ let selectedRun = null
 let displayedRun = null
 let sanitizedRuns = []
 let activeOptionId = null
+let scaleType = 'linear'
+let smoothing = SMOOTHING.initial
 let sort = 'id'
 let direction = 'asc'
 
@@ -89,6 +94,19 @@ app.innerHTML = `
                 <div id="run-update-status" class="update-status" role="status" hidden>Updating selected run…</div>
               </div>
               <ul id="anomaly-summary" class="anomaly-summary" aria-label="Flagged points by kind"></ul>
+              <div class="chart-controls">
+                <fieldset class="segmented">
+                  <legend>Y axis</legend>
+                  <label><input type="radio" name="y-scale" value="linear" checked /> Linear</label>
+                  <label><input type="radio" name="y-scale" value="log" /> Log</label>
+                </fieldset>
+                <div class="slider-control">
+                  <label for="smoothing">Smoothing (EMA weight) <output id="smoothing-value" for="smoothing"></output></label>
+                  <input id="smoothing" type="range" min="${SMOOTHING.min}" max="${SMOOTHING.max}" step="${SMOOTHING.step}"
+                    value="${SMOOTHING.initial}" aria-describedby="smoothing-hint" />
+                  <span id="smoothing-hint" class="muted">0 shows raw data only. The raw line and min–max band are always drawn.</span>
+                </div>
+              </div>
               <div id="run-body">
                 <div id="metric-cards" class="metric-cards"></div>
                 <div id="chart-panels" class="chart-panels"></div>
@@ -225,7 +243,7 @@ function renderCharts(run) {
   chartPanels.innerHTML = METRICS.map(
     (metric) => `
       <article class="chart-card">
-        <div class="chart-heading"><h3>${metric}</h3><span>Raw + smoothed</span></div>
+        <div class="chart-heading"><h3>${metric}</h3><span data-mode="${metric}"></span></div>
         <canvas data-chart="${metric}" width="800" height="300"></canvas>
         <p class="chart-help" data-a11y="${metric}">Use arrow keys to pan and Shift+Arrow to inspect points.</p>
       </article>
@@ -237,8 +255,14 @@ function renderCharts(run) {
     const a11yTarget = chartPanels.querySelector(`[data-a11y="${metric}"]`)
     const series = { steps: run.steps, values: run[metric], anomaly: run.anomaly }
     const viewState = createViewState([run.steps[0], run.steps[run.steps.length - 1]])
+    const mode = chartPanels.querySelector(`[data-mode="${metric}"]`)
+    const nonPositive = countNonPositive(run[metric])
     let scales = null
     const redraw = () => {
+      mode.textContent = describeChartMode(
+        { scaleType, smoothing, nonPositive },
+        { integer: formatInteger, number: formatNumber },
+      )
       // Draw in the canvas's own CSS box. Pointer positions are measured in
       // CSS pixels, so any other width would make the crosshair report a
       // different point from the one under the cursor. setupCanvas scales the
@@ -246,7 +270,14 @@ function renderCharts(run) {
       const width = Math.floor(canvas.clientWidth) || 320
       const height = 300
       const ctx = setupCanvas(canvas, width, height)
-      scales = renderChart(ctx, series, { width, height, xRange: viewState.getRange(), theme: 'light' })
+      scales = renderChart(ctx, series, {
+        width,
+        height,
+        xRange: viewState.getRange(),
+        scaleType,
+        smoothing,
+        theme: 'light',
+      })
       renderCrosshairOverlay(ctx, interactions.find((item) => item.canvas === canvas)?.getCrosshair(), scales.xScale, scales.yScale, scales.margins, scales.plotW, scales.plotH)
     }
     redraw()
@@ -258,9 +289,30 @@ function renderCharts(run) {
       a11yTarget,
       accessibleName: `${metric} chart for run ${formatInteger(run.id)}`,
     })
-    interactions.push({ ...control, canvas })
+    interactions.push({ ...control, canvas, redraw })
   })
 }
+
+/** Redraw the charts in place, keeping each chart's zoom and crosshair. */
+function redrawCharts() {
+  interactions.forEach(({ redraw }) => redraw())
+}
+
+const smoothingInput = document.querySelector('#smoothing')
+const smoothingValue = document.querySelector('#smoothing-value')
+smoothingValue.textContent = formatNumber(smoothing)
+smoothingInput.addEventListener('input', () => {
+  smoothing = Number(smoothingInput.value)
+  smoothingValue.textContent = smoothing > 0 ? formatNumber(smoothing) : 'off'
+  redrawCharts()
+})
+document.querySelectorAll('input[name="y-scale"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    if (!radio.checked) return
+    scaleType = radio.value
+    redrawCharts()
+  })
+})
 
 function showError(exception) {
   loading.hidden = true

@@ -173,8 +173,16 @@ Web Worker.
 ### `chart/renderer.js` — canvas drawing
 
 - **Why the EMA is computed on the raw series:** smoothing the decimated
-  points would make the curve change shape with zoom level. It is computed
-  once per `(values buffer, weight)` and cached in a `WeakMap`.
+  points would make the curve change shape with zoom level. It is cached in a
+  `WeakMap` per values buffer for the weight last used — only one copy, so
+  dragging the smoothing slider does not leave a full-length array behind for
+  every position.
+- **Why smoothing and the y-scale are user controls:** a heavy EMA lags the
+  data and can hide a divergence, and a log axis cannot place zero or negative
+  values. Both are therefore visible choices, not defaults buried in code: the
+  slider goes down to "off", the raw line and min–max band are always drawn
+  under the smoothed curve, and each chart heading states the weight in use
+  and, on a log axis, how many values `≤ 0` could not be placed.
 - **Why the EMA resets:** at a non-finite value or a gap, the average restarts
   from the next real value. Carrying it across would draw a confident line
   through data that does not exist.
@@ -195,8 +203,7 @@ Web Worker.
   - Pixels. Tests use a recording stub for the 2D context: they prove which
     calls are made and that no non-finite coordinate reaches `moveTo` /
     `lineTo`, not what the result looks like.
-  - Overlapping badges when several non-finite points fall on the same pixel.
-  - The `dark` theme, which exists in code but is not wired into the UI.
+  - Overlapping badges when several non-finite points fall on the same pixel.  - The `dark` theme, which exists in code but is not wired into the UI.
 
 ### `chart/interaction.js` — zoom, pan, crosshair, keyboard
 
@@ -322,6 +329,17 @@ Web Worker.
   `main`, with Node pinned through `.nvmrc`.
 - **Does not catch:** anything that needs a browser (no end-to-end tests), and
   there is no coverage threshold.
+
+### Deployment (Vercel)
+
+- The site is a static Vite build (`npm run build` → `dist/`) hosted on Vercel.
+  The build uses relative asset URLs (`base: './'`), so the same output also
+  works under a sub-path such as GitHub Pages.
+- **Trade-off:** Vercel builds the commit it is given and does not run the
+  test suite. The quality gate is CI on the pull request, so a deploy made
+  from an unmerged or local state is not covered by it.
+- **Does not catch:** a broken page that still builds — nothing loads the
+  deployed site and checks it automatically.
 
 ---
 
