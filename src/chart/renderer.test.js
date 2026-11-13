@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderChart, setupCanvas, computeEMA } from './renderer.js'
 import { generateRun, LARGE_RUN_ID, LARGE_RUN_STEPS, LARGE_RUN_SPIKE_STEP } from '../pipeline/generator.js'
-import { sanitizeRun } from '../pipeline/sanitizer.js'
+import { sanitizeRun, ANOMALY } from '../pipeline/sanitizer.js'
 
 /**
  * Create a mock CanvasRenderingContext2D that records operations
@@ -39,6 +39,8 @@ function createMockContext() {
     stroke: () => calls.push({ method: 'stroke', args: [] }),
     fill: () => calls.push({ method: 'fill', args: [] }),
     strokeRect: (x, y, w, h) => calls.push({ method: 'strokeRect', args: [x, y, w, h] }),
+    rect: (x, y, w, h) => calls.push({ method: 'rect', args: [x, y, w, h] }),
+    clip: () => calls.push({ method: 'clip', args: [] }),
     fillRect: (x, y, w, h) => calls.push({ method: 'fillRect', args: [x, y, w, h] }),
     fillText: (text, x, y) => calls.push({ method: 'fillText', args: [text, x, y] }),
     setLineDash: (segments) => calls.push({ method: 'setLineDash', args: [segments] }),
@@ -177,8 +179,93 @@ describe('renderChart — Issue #14 & GATE acceptance criteria', () => {
     expect(spikePy).toBeGreaterThanOrEqual(20) // margins.top is 20
     expect(spikePy).toBeLessThanOrEqual(380)
 
-    // 4. Anomaly marker was drawn
-    const hasAnomalyMarker = ctx.calls.some((c) => c.method === 'fillStyle' || c.method === 'fillRect')
-    expect(hasAnomalyMarker).toBe(true)
+    // 4. A diamond anomaly marker is drawn on the spike (right vertex at px+5, py)
+    const spikePx = renderXScale(ctx, decimated, spikeIdx)
+    expect(hasDiamondAt(ctx, spikePx, spikePy)).toBe(true)
+  })
+
+  it('zoomed-out 1M run is one continuous line, not shaded as gaps', () => {
+    const ctx = createMockContext()
+    const s = sanitizeRun(generateRun(LARGE_RUN_ID, { steps: LARGE_RUN_STEPS }))
+    renderChart(ctx, { steps: s.steps, values: s.loss, anomaly: s.anomaly }, { width: 800, height: 400 })
+
+    const gapShades = ctx.calls.filter(
+      (c) => c.method === 'fillRect' && c.args[3] === 340 && c.args[1] === 20,
+    )
+    expect(gapShades.length).toBeLessThanOrEqual(s.gaps)
+    // A handful of path starts (segments, markers, grid) — not one per point.
+    expect(ctx.moveToCoords.length).toBeLessThan(150)
+  })
+})
+
+/** x pixel of decimated point k, derived from the drawn chart. */
+function renderXScale(ctx, decimated, k) {
+  const ctx2 = createMockContext()
+  const { xScale } = renderChart(ctx2, decimated, { width: 800, height: 400, smoothing: 0 })
+  return xScale.scale(decimated.steps[k])
+}
+
+function hasDiamondAt(ctx, px, py) {
+  return ctx.lineToCoords.some(([x, y]) => Math.abs(x - (px + 5)) < 1e-6 && Math.abs(y - py) < 1e-6)
+}
+
+describe('renderChart — markers, envelope, smoothing, axes', () => {
+  const N = 4000
+  const steps = Float64Array.from({ length: N }, (_, i) => (i < 2000 ? i : i + 50))
+  const values = Float64Array.from({ length: N }, (_, i) => 1 + Math.sin(i / 25) * 0.2)
+
+  it('anomaly bitmask (OUTLIER = 2) draws a diamond', () => {
+    const ctx = createMockContext()
+    const a = new Uint8Array(N)
+    a[500] = ANOMALY.OUTLIER
+    const { xScale, yScale } = renderChart(ctx, { steps, values, anomaly: a }, { width: 800, height: 400 })
+    expect(hasDiamondAt(ctx, xScale.scale(steps[500]), yScale.scale(values[500]))).toBe(true)
+  })
+
+  it('envelope is filled per segment, never across a gap', () => {
+    const ctx = createMockContext()
+    renderChart(ctx, { steps, values }, { width: 800, height: 400 })
+    // 2 segments → 2 envelope polygons
+    const fills = ctx.calls.filter((c) => c.method === 'fill')
+    expect(fills.length).toBe(2)
+  })
+
+  it('smoothed curve is computed on raw data and does not change with zoom', () => {
+    const full = renderChart(createMockContext(), { steps, values }, { width: 800, height: 400 })
+    const zoom = renderChart(createMockContext(), { steps, values }, { width: 800, height: 400, xRange: [900, 1100] })
+    const step = zoom.decimated.steps[50]
+    const kFull = Array.from(full.decimated.steps).indexOf(step)
+    if (kFull >= 0) {
+      expect(zoom.smoothed[50]).toBe(full.smoothed[kFull])
+    }
+    // Directly: equals the raw EMA at that step.
+    const ema = computeEMA(steps, values, 0.8)
+    expect(zoom.smoothed[50]).toBe(ema[zoom.decimated.index[50]])
+  })
+
+  it('negative values stay inside the plot (no clamp at 0)', () => {
+    const neg = Float64Array.from({ length: 100 }, (_, i) => -5 + i * 0.01)
+    const st = Float64Array.from({ length: 100 }, (_, i) => i)
+    const { yScale } = renderChart(createMockContext(), { steps: st, values: neg }, { width: 800, height: 400 })
+    const py = yScale.scale(-5)
+    expect(py).toBeGreaterThanOrEqual(20)
+    expect(py).toBeLessThanOrEqual(360)
+  })
+
+  it('log scale marks finite values <= 0 as not plottable', () => {
+    const ctx = createMockContext()
+    const st = Float64Array.from({ length: 10 }, (_, i) => i)
+    const v = Float64Array.from({ length: 10 }, () => 0.5)
+    v[4] = 0
+    v[7] = -1
+    renderChart(ctx, { steps: st, values: v }, { width: 800, height: 400, scaleType: 'log' })
+    const badges = ctx.calls.filter((c) => c.method === 'fillText' && c.args[0] === '≤0')
+    expect(badges.length).toBe(2)
+  })
+
+  it('data drawing is clipped to the plot area', () => {
+    const ctx = createMockContext()
+    renderChart(ctx, { steps, values }, { width: 800, height: 400, xRange: [100, 200] })
+    expect(ctx.calls.some((c) => c.method === 'clip')).toBe(true)
   })
 })

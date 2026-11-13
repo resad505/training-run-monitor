@@ -181,3 +181,89 @@ describe('downsample — Issue #13 acceptance criteria', () => {
     expect(result.length).toBe(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Break flags, anomaly survival, bound
+// ---------------------------------------------------------------------------
+
+import { sanitizeRun as _sanitizeRun, ANOMALY as _ANOMALY } from '../pipeline/sanitizer.js'
+import { generateRun as _generateRun, LARGE_RUN_ID as _BIG, LARGE_RUN_STEPS as _BIG_N } from '../pipeline/generator.js'
+
+describe('downsample — explicit break flags', () => {
+  const big = _sanitizeRun(_generateRun(_BIG, { steps: _BIG_N }))
+  const full = downsample({ steps: big.steps, values: big.loss, anomaly: big.anomaly, targetWidth: 700 })
+
+  it('gapBefore is set only where the source data has a real step gap', () => {
+    const flagged = Array.from(full.gapBefore).filter(Boolean).length
+    expect(flagged).toBe(big.gaps)
+  })
+
+  it('breakBefore is rare on clean data (decimated neighbours are not gaps)', () => {
+    const breaks = Array.from(full.breakBefore).filter(Boolean).length
+    // one per finite segment + one per non-finite point
+    expect(breaks).toBeLessThan(20)
+    expect(full.breakBefore[0]).toBe(1)
+  })
+
+  it('breaks before and after a non-finite point', () => {
+    const steps = Float64Array.from({ length: 2000 }, (_, i) => i)
+    const values = Float64Array.from({ length: 2000 }, (_, i) => Math.sin(i / 7))
+    values[1000] = NaN
+    const r = downsample({ steps, values, targetWidth: 100 })
+    const k = Array.from(r.steps).indexOf(1000)
+    expect(r.breakBefore[k]).toBe(1)
+    expect(r.breakBefore[k + 1]).toBe(1)
+    expect(r.steps[k + 1]).toBe(1001)
+  })
+
+  it('every anomalous point in the window survives', () => {
+    const kept = new Set(Array.from(full.index))
+    for (let i = 0; i < big.length; i++) {
+      if (big.anomaly[i]) expect(kept.has(i), `raw index ${i}`).toBe(true)
+    }
+  })
+
+  it('index maps each output point back to its source', () => {
+    for (let k = 0; k < full.length; k += 97) {
+      expect(big.steps[full.index[k]]).toBe(full.steps[k])
+    }
+  })
+
+  it('envelope starts a new polygon at every segment', () => {
+    const steps = Float64Array.from({ length: 4000 }, (_, i) => (i < 2000 ? i : i + 50))
+    const values = Float64Array.from({ length: 4000 }, (_, i) => Math.cos(i / 9))
+    const r = downsample({ steps, values, targetWidth: 100 })
+    expect(Array.from(r.envelope.breakBefore).filter(Boolean).length).toBe(2)
+  })
+
+  it('respects the documented bound on adversarial input', () => {
+    const N = 50_000
+    const steps = new Float64Array(N)
+    const values = new Float64Array(N)
+    const anomaly = new Uint8Array(N)
+    let step = 0
+    let S = 1
+    let F = 0
+    let A = 0
+    for (let i = 0; i < N; i++) {
+      if (i > 0 && i % 997 === 0) {
+        step += 5
+        S++
+      }
+      steps[i] = step++
+      values[i] = i % 1301 === 0 ? NaN : Math.sin(i)
+      if (!Number.isFinite(values[i])) {
+        F++
+        S++
+      }
+      if (i % 2003 === 0) {
+        anomaly[i] = _ANOMALY.OUTLIER
+        A++
+      }
+    }
+    const W = 300
+    const r = downsample({ steps, values, anomaly, targetWidth: W })
+    expect(r.length).toBeLessThanOrEqual(2 * W + 4 * S + F + A)
+    expect(r.envelope.length).toBeLessThanOrEqual(2 * (W + S))
+  })
+})

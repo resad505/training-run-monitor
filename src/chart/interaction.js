@@ -6,12 +6,40 @@
  * Guarantees (Issue #15 acceptance criteria):
  *   1. Wheel/drag and keyboard zoom, pan, and reset.
  *   2. The crosshair reports the RAW value from the original dataset,
- *      never the decimated/bucket value.
- *   3. Canvas has an accessible name and a live text alternative for the hovered point.
+ *      never the decimated/bucket value. When one pixel covers several raw
+ *      points it also reports their raw min/max and anomaly flags, so a spike
+ *      under the cursor is never hidden behind its neighbour's value.
+ *   3. Canvas has an accessible name and a live text alternative for the
+ *      inspected point; points can be inspected from the keyboard
+ *      (Shift+Arrow steps through points, [ and ] jump between anomalies).
  */
 
-import { binarySearchFirstGe } from './downsample.js'
+import { binarySearchFirstGe, binarySearchLastLe } from './downsample.js'
 import { formatTickNumber } from './scale.js'
+import { ANOMALY } from '../pipeline/sanitizer.js'
+
+const ANOMALY_NAMES = [
+  [ANOMALY.NON_FINITE, 'non-finite value'],
+  [ANOMALY.OUTLIER, 'outlier'],
+  [ANOMALY.COLLISION, 'duplicate step'],
+  [ANOMALY.GAP, 'gap before this step'],
+  [ANOMALY.PLATEAU, 'plateau'],
+]
+
+/**
+ * Human-readable list of the anomaly kinds set in a flag bitmask.
+ * @param {number} flags
+ * @returns {string} '' when clean
+ */
+export function describeAnomaly(flags) {
+  return ANOMALY_NAMES.filter(([bit]) => flags & bit)
+    .map(([, name]) => name)
+    .join(', ')
+}
+
+const KEY_HELP =
+  'Arrow keys pan, Up and Down zoom, Home resets. ' +
+  'Shift with Left or Right steps through points, [ and ] jump to the previous or next anomaly, Escape clears.'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -133,12 +161,56 @@ export function createViewState(fullRange) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the crosshair record for one raw index. When `xScale` is given, also
+ * summarise every raw point that falls in the same screen pixel.
+ *
+ * @param {object} rawSeries - { steps, values, anomaly }
+ * @param {number} rawIdx
+ * @param {object} [xScale]
+ * @returns {{ step: number, value: number, anomaly: number, rawIndex: number,
+ *            pixel: null | { count: number, min: number, max: number, anomaly: number } }}
+ */
+export function rawPointAt(rawSeries, rawIdx, xScale) {
+  const point = {
+    step: rawSeries.steps[rawIdx],
+    value: rawSeries.values[rawIdx], // RAW value from original dataset!
+    anomaly: rawSeries.anomaly ? rawSeries.anomaly[rawIdx] : 0,
+    rawIndex: rawIdx,
+    pixel: null,
+  }
+
+  const px = xScale ? xScale.scale(point.step) : null
+  if (px === null) return point
+
+  const s0 = xScale.invert(px - 0.5)
+  const s1 = xScale.invert(px + 0.5)
+  if (s0 === null || s1 === null) return point
+  const lo = binarySearchFirstGe(rawSeries.steps, Math.min(s0, s1))
+  const hi = binarySearchLastLe(rawSeries.steps, Math.max(s0, s1))
+  if (hi - lo < 1) return point
+
+  let min = Infinity
+  let max = -Infinity
+  let flags = 0
+  for (let i = lo; i <= hi; i++) {
+    const v = rawSeries.values[i]
+    if (Number.isFinite(v)) {
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    if (rawSeries.anomaly) flags |= rawSeries.anomaly[i]
+  }
+  point.pixel = { count: hi - lo + 1, min, max, anomaly: flags }
+  return point
+}
+
+/**
  * Inspect raw data at a given mouse pixel X.
  *
  * @param {number} mousePx
  * @param {object} xScale - Active scale mapping steps to pixels
  * @param {object} rawSeries - Original un-decimated series { steps, values, anomaly }
- * @returns {null | { step: number, value: number, anomaly: number, rawIndex: number }}
+ * @returns {null | ReturnType<typeof rawPointAt>}
  */
 export function inspectRawPoint(mousePx, xScale, rawSeries) {
   if (!xScale || !rawSeries || !rawSeries.steps || rawSeries.steps.length === 0) {
@@ -155,12 +227,26 @@ export function inspectRawPoint(mousePx, xScale, rawSeries) {
     return null
   }
 
-  return {
-    step: rawSeries.steps[rawIdx],
-    value: rawSeries.values[rawIdx], // RAW value from original dataset!
-    anomaly: rawSeries.anomaly ? rawSeries.anomaly[rawIdx] : 0,
-    rawIndex: rawIdx,
+  return rawPointAt(rawSeries, rawIdx, xScale)
+}
+
+/**
+ * Text alternative for an inspected point (also used for the tooltip).
+ * @param {ReturnType<typeof rawPointAt>} info
+ * @returns {string}
+ */
+export function describePoint(info) {
+  let text = `Step ${info.step}: value ${formatMetricValue(info.value)}`
+  const kinds = describeAnomaly(info.anomaly)
+  if (kinds) text += ` (anomaly: ${kinds})`
+  if (info.pixel) {
+    const { count, min, max, anomaly } = info.pixel
+    const range = Number.isFinite(min) ? `${formatMetricValue(min)} to ${formatMetricValue(max)}` : 'no finite values'
+    text += `. This pixel covers ${count} points, range ${range}`
+    const pixelKinds = describeAnomaly(anomaly & ~info.anomaly)
+    if (pixelKinds) text += `, including ${pixelKinds}`
   }
+  return text
 }
 
 // ---------------------------------------------------------------------------
@@ -183,25 +269,81 @@ export function inspectRawPoint(mousePx, xScale, rawSeries) {
 export function attachInteractions(canvas, options) {
   const { rawSeries, viewState, getScales, onRender, a11yTarget, accessibleName = 'Training run metric chart' } = options
 
-  // Ensure accessible attributes on canvas
-  canvas.setAttribute('role', 'img')
+  // Accessible name + keyboard focus. role="application" lets screen readers
+  // pass arrow keys through to the chart instead of using them to browse.
+  canvas.setAttribute('role', 'application')
+  canvas.setAttribute('aria-roledescription', 'chart')
   canvas.setAttribute('tabindex', '0')
-  canvas.setAttribute('aria-label', accessibleName)
+  canvas.setAttribute('aria-label', `${accessibleName}. ${KEY_HELP}`)
+  if (a11yTarget) {
+    a11yTarget.setAttribute('role', 'status')
+    a11yTarget.setAttribute('aria-live', 'polite')
+    if (a11yTarget.id) canvas.setAttribute('aria-describedby', a11yTarget.id)
+  }
 
   let activeCrosshair = null
   let isDragging = false
   let dragStartX = 0
   let dragStartRange = null
 
+  function announce(text) {
+    if (a11yTarget && a11yTarget.textContent !== text) a11yTarget.textContent = text
+  }
+
   function updateA11yText(info) {
-    if (!a11yTarget) return
-    if (!info) {
-      a11yTarget.textContent = `${accessibleName}. Interactive chart. Use arrow keys to pan and zoom.`
+    announce(info ? describePoint(info) : `${accessibleName}. ${KEY_HELP}`)
+  }
+
+  function announceRange() {
+    const [r0, r1] = viewState.getRange()
+    announce(`Showing steps ${Math.round(r0)} to ${Math.round(r1)}`)
+  }
+
+  /** Move the crosshair to a raw index, panning so it stays in view. */
+  function moveCrosshairTo(rawIdx) {
+    const n = rawSeries.steps.length
+    if (n === 0) return
+    const idx = Math.max(0, Math.min(n - 1, rawIdx))
+    const step = rawSeries.steps[idx]
+    const [r0, r1] = viewState.getRange()
+    if (step < r0 || step > r1) viewState.pan(step - (r0 + r1) / 2)
+    onRender()
+    activeCrosshair = rawPointAt(rawSeries, idx, getScales().xScale)
+    updateA11yText(activeCrosshair)
+    onRender()
+  }
+
+  /** Step by one point, or by one pixel's worth of points when zoomed out. */
+  function stepCrosshair(direction) {
+    const { xScale } = getScales()
+    if (!activeCrosshair) {
+      const [r0, r1] = viewState.getRange()
+      moveCrosshairTo(binarySearchNearest(rawSeries.steps, direction > 0 ? r0 : r1))
       return
     }
+    const cur = activeCrosshair.rawIndex
+    let next = cur + direction
+    if (xScale) {
+      const px = xScale.scale(rawSeries.steps[cur])
+      const target = px === null ? null : xScale.invert(px + direction)
+      if (target !== null) {
+        const byPixel = binarySearchNearest(rawSeries.steps, target)
+        if (direction > 0 ? byPixel > next : byPixel < next) next = byPixel
+      }
+    }
+    moveCrosshairTo(next)
+  }
 
-    const statusText = info.anomaly ? ' [Anomaly detected]' : ''
-    a11yTarget.textContent = `Step ${info.step}: Value ${formatMetricValue(info.value)}${statusText}`
+  /** Jump to the previous/next raw point with any anomaly flag set. */
+  function jumpToAnomaly(direction) {
+    const flags = rawSeries.anomaly
+    if (!flags) return announce('No anomaly data for this series')
+    const n = rawSeries.steps.length
+    const from = activeCrosshair ? activeCrosshair.rawIndex : direction > 0 ? -1 : n
+    for (let i = from + direction; i >= 0 && i < n; i += direction) {
+      if (flags[i]) return moveCrosshairTo(i)
+    }
+    announce(direction > 0 ? 'No later anomaly' : 'No earlier anomaly')
   }
 
   updateA11yText(null)
@@ -268,6 +410,7 @@ export function attachInteractions(canvas, options) {
   function handlePointerLeave() {
     if (!isDragging) {
       activeCrosshair = null
+      updateA11yText(null)
       onRender()
     }
   }
@@ -284,6 +427,24 @@ export function attachInteractions(canvas, options) {
     const range = viewState.getRange()
     const span = range[1] - range[0]
     const stepCenter = (range[0] + range[1]) / 2
+
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault()
+      stepCrosshair(e.key === 'ArrowRight' ? 1 : -1)
+      return
+    }
+    if (e.key === '[' || e.key === ']') {
+      e.preventDefault()
+      jumpToAnomaly(e.key === ']' ? 1 : -1)
+      return
+    }
+    if (e.key === 'Escape' && activeCrosshair) {
+      e.preventDefault()
+      activeCrosshair = null
+      updateA11yText(null)
+      onRender()
+      return
+    }
 
     let handled = true
 
@@ -323,6 +484,7 @@ export function attachInteractions(canvas, options) {
     if (handled) {
       e.preventDefault()
       onRender()
+      announceRange()
     }
   }
 
@@ -399,7 +561,13 @@ export function renderCrosshairOverlay(ctx, crosshair, xScale, yScale, margins, 
   }
 
   // Floating tooltip card
-  const label = `Step ${crosshair.step}: ${formatMetricValue(crosshair.value)}`
+  let label = `Step ${crosshair.step}: ${formatMetricValue(crosshair.value)}`
+  if (crosshair.pixel && Number.isFinite(crosshair.pixel.min)) {
+    const { count, min, max } = crosshair.pixel
+    label += `  (${count} pts in px: ${formatMetricValue(min)} – ${formatMetricValue(max)})`
+  }
+  const kinds = describeAnomaly(crosshair.anomaly)
+  if (kinds) label += `  ⚠ ${kinds}`
   ctx.font = 'bold 12px sans-serif'
   const textW = ctx.measureText ? ctx.measureText(label).width : 120
   const boxW = textW + 16

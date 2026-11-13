@@ -31,11 +31,12 @@ export function formatTickNumber(num) {
 
   // For very small or very large numbers, use standard scientific notation
   if (abs >= 1e9 || (abs < 1e-4 && abs > 0)) {
-    const expStr = num.toExponential(4)
-    // Clean up trailing zeros in scientific notation e.g. 1.0000e-5 -> 1e-5
-    const cleaned = expStr.replace(/\.0+e/, 'e').replace(/(\.\d+?)0+e/, '$1e')
-    if (Number(cleaned) === num) return cleaned
-    return expStr
+    // Shortest exponent form that still round-trips exactly.
+    for (let digits = 0; digits <= 16; digits++) {
+      const str = num.toExponential(digits)
+      if (Number(str) === num) return str
+    }
+    return String(num)
   }
 
   // Round to at most 10 decimal digits to remove binary float representation artifacts
@@ -93,6 +94,9 @@ function niceStep(min, max, count) {
 export function createLinearScale({ domain, range, clamp = false }) {
   const [d0, d1] = domain
   const [r0, r1] = range
+  if (![d0, d1, r0, r1].every(Number.isFinite)) {
+    throw new RangeError(`Linear scale needs a finite domain and range, got [${d0}, ${d1}] -> [${r0}, ${r1}]`)
+  }
 
   const dSpan = d1 - d0
   const rSpan = r1 - r0
@@ -229,9 +233,16 @@ export function createLogScale({ domain, range, base = 10, clamp = false }) {
   const [d0, d1] = domain
   const [r0, r1] = range
 
-  // Validate positive domain for log scale
-  const safeD0 = d0 > 0 ? d0 : 1e-4
-  const safeD1 = d1 > 0 ? d1 : 1
+  // A log domain must be strictly positive. An invalid domain is a caller
+  // bug: fail loudly instead of silently substituting an artificial bound.
+  if (!(Number.isFinite(d0) && Number.isFinite(d1) && d0 > 0 && d1 > 0)) {
+    throw new RangeError(`Log scale domain must be finite and > 0, got [${d0}, ${d1}]`)
+  }
+  if (![r0, r1].every(Number.isFinite)) {
+    throw new RangeError(`Log scale range must be finite, got [${r0}, ${r1}]`)
+  }
+  const safeD0 = d0
+  const safeD1 = d1
 
   const logBase = Math.log(base)
   const logD0 = Math.log(safeD0) / logBase
@@ -334,6 +345,9 @@ export function createLogScale({ domain, range, base = 10, clamp = false }) {
         }
       }
     }
+
+    // Very narrow domains may contain no 1-2-5 value: label the bounds.
+    if (result.length === 0) return [min, max]
 
     return result
   }

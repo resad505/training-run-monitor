@@ -5,7 +5,10 @@ import {
   createViewState,
   inspectRawPoint,
   attachInteractions,
+  describeAnomaly,
+  describePoint,
 } from './interaction.js'
+import { ANOMALY } from '../pipeline/sanitizer.js'
 import { createLinearScale } from './scale.js'
 
 describe('binarySearchNearest', () => {
@@ -130,11 +133,120 @@ describe('inspectRawPoint — Issue #15 acceptance criteria', () => {
     expect(Number.isNaN(nanPoint.value)).toBe(true)
   })
 
+  it('reports the raw min/max of every point under the pixel (spike next to cursor)', () => {
+    const N = 100_000
+    const steps = Float64Array.from({ length: N }, (_, i) => i)
+    const values = new Float64Array(N).fill(0.2)
+    const anomaly = new Uint8Array(N)
+    values[50_000] = 9.5
+    anomaly[50_000] = ANOMALY.OUTLIER
+
+    const xScale = createLinearScale({ domain: [0, N - 1], range: [0, 800] })
+    // Cursor lands on a neighbour of the spike, inside the same pixel.
+    const point = inspectRawPoint(xScale.scale(50_010), xScale, { steps, values, anomaly })
+
+    expect(point.value).toBe(0.2)
+    expect(point.pixel.count).toBeGreaterThan(100)
+    expect(point.pixel.max).toBe(9.5)
+    expect(point.pixel.anomaly & ANOMALY.OUTLIER).toBeTruthy()
+    expect(describePoint(point)).toContain('including outlier')
+  })
+
   it('inspectRawPoint returns null for invalid coordinates', () => {
     const rawSeries = { steps: new Float64Array([0, 1]), values: new Float64Array([1, 2]) }
     const xScale = createLinearScale({ domain: [0, 1], range: [0, 100] })
 
     expect(inspectRawPoint(NaN, xScale, rawSeries)).toBeNull()
+  })
+})
+
+describe('describeAnomaly', () => {
+  it('decodes the sanitizer bitmask into names', () => {
+    expect(describeAnomaly(0)).toBe('')
+    expect(describeAnomaly(ANOMALY.OUTLIER | ANOMALY.PLATEAU)).toBe('outlier, plateau')
+    expect(describeAnomaly(ANOMALY.NON_FINITE)).toBe('non-finite value')
+  })
+})
+
+/** Minimal DOM-ish element recording attributes. */
+function mockElement(extra = {}) {
+  const attrs = {}
+  const listeners = {}
+  return {
+    attrs,
+    listeners,
+    textContent: '',
+    setAttribute: (k, v) => {
+      attrs[k] = v
+    },
+    addEventListener: (evt, fn) => {
+      listeners[evt] = fn
+    },
+    removeEventListener: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
+    ...extra,
+  }
+}
+
+function key(k, extra = {}) {
+  return { key: k, shiftKey: false, preventDefault: () => {}, ...extra }
+}
+
+describe('attachInteractions — keyboard inspection', () => {
+  function setup() {
+    const canvas = mockElement()
+    const live = mockElement({ id: 'chart-status' })
+    const viewState = createViewState([0, 9])
+    const steps = Float64Array.from({ length: 10 }, (_, i) => i)
+    const values = Float64Array.from({ length: 10 }, (_, i) => 1 + i / 10)
+    const anomaly = new Uint8Array(10)
+    values[6] = NaN
+    anomaly[6] = ANOMALY.NON_FINITE
+    anomaly[8] = ANOMALY.OUTLIER
+    const xScale = createLinearScale({ domain: [0, 9], range: [0, 800] })
+    const api = attachInteractions(canvas, {
+      rawSeries: { steps, values, anomaly },
+      viewState,
+      getScales: () => ({ xScale, yScale: null }),
+      onRender: () => {},
+      a11yTarget: live,
+      accessibleName: 'Loss Chart',
+    })
+    return { canvas, live, api }
+  }
+
+  it('Shift+Arrow steps through raw points and announces them', () => {
+    const { canvas, live, api } = setup()
+    canvas.listeners.keydown(key('ArrowRight', { shiftKey: true }))
+    expect(api.getCrosshair().step).toBe(0)
+    canvas.listeners.keydown(key('ArrowRight', { shiftKey: true }))
+    expect(api.getCrosshair().step).toBe(1)
+    expect(live.textContent).toContain('Step 1')
+    canvas.listeners.keydown(key('ArrowLeft', { shiftKey: true }))
+    expect(api.getCrosshair().step).toBe(0)
+  })
+
+  it('] and [ jump between anomalies; Escape clears', () => {
+    const { canvas, live, api } = setup()
+    canvas.listeners.keydown(key(']'))
+    expect(api.getCrosshair().step).toBe(6)
+    expect(live.textContent).toContain('NaN')
+    canvas.listeners.keydown(key(']'))
+    expect(api.getCrosshair().step).toBe(8)
+    expect(live.textContent).toContain('outlier')
+    canvas.listeners.keydown(key(']'))
+    expect(live.textContent).toBe('No later anomaly')
+    canvas.listeners.keydown(key('['))
+    expect(api.getCrosshair().step).toBe(6)
+    canvas.listeners.keydown(key('Escape'))
+    expect(api.getCrosshair()).toBeNull()
+  })
+
+  it('wires the live region to the canvas', () => {
+    const { canvas, live } = setup()
+    expect(live.attrs['aria-live']).toBe('polite')
+    expect(live.attrs['role']).toBe('status')
+    expect(canvas.attrs['aria-describedby']).toBe('chart-status')
   })
 })
 
@@ -154,7 +266,7 @@ describe('attachInteractions — Accessibility & Keyboard Controls', () => {
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
     }
 
-    const mockA11y = { textContent: '' }
+    const mockA11y = { textContent: '', setAttribute: () => {} }
     const viewState = createViewState([0, 100])
     const rawSeries = { steps: new Float64Array([0, 50, 100]), values: new Float64Array([1, 2, 3]) }
     const xScale = createLinearScale({ domain: [0, 100], range: [0, 800] })
@@ -168,9 +280,11 @@ describe('attachInteractions — Accessibility & Keyboard Controls', () => {
       accessibleName: 'Loss Chart',
     })
 
-    expect(attrs['role']).toBe('img')
+    expect(attrs['role']).toBe('application')
+    expect(attrs['aria-roledescription']).toBe('chart')
     expect(attrs['tabindex']).toBe('0')
-    expect(attrs['aria-label']).toBe('Loss Chart')
+    expect(attrs['aria-label']).toContain('Loss Chart')
+    expect(attrs['aria-label']).toContain('Shift')
     expect(mockA11y.textContent).toContain('Loss Chart')
 
     // Zoom in first so there is room to pan
@@ -185,5 +299,6 @@ describe('attachInteractions — Accessibility & Keyboard Controls', () => {
 
     const [panned0] = viewState.getRange()
     expect(panned0).toBeGreaterThan(initial0)
+    expect(mockA11y.textContent).toMatch(/^Showing steps/)
   })
 })

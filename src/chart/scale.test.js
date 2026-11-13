@@ -155,3 +155,38 @@ describe('createLogScale — Issue #12', () => {
     expect(ticks).toEqual([1, 2, 5])
   })
 })
+
+describe('scale hardening', () => {
+  it('scientific-notation labels round-trip exactly', () => {
+    for (const v of [1.23456789e-5, 1.234567890123e12, -7.777777e-9, 1e-5, 2.5e12]) {
+      expect(Number(formatTickNumber(v))).toBe(v)
+    }
+  })
+
+  it('round-trips random values across magnitudes', () => {
+    let seed = 7
+    const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32)
+    for (let k = 0; k < 5000; k++) {
+      const v = (rand() - 0.5) * 10 ** Math.floor(rand() * 40 - 20)
+      expect(Number(formatTickNumber(v))).toBe(v)
+    }
+  })
+
+  it('log scale rejects a non-positive domain instead of substituting one', () => {
+    expect(() => createLogScale({ domain: [0, 10], range: [0, 100] })).toThrow(RangeError)
+    expect(() => createLogScale({ domain: [-1, 10], range: [0, 100] })).toThrow(RangeError)
+  })
+
+  it('linear scale rejects a non-finite domain', () => {
+    expect(() => createLinearScale({ domain: [0, Infinity], range: [0, 100] })).toThrow(RangeError)
+  })
+
+  it('narrow log domains still get in-domain ticks', () => {
+    const ticks = createLogScale({ domain: [0.6, 0.9], range: [0, 100] }).ticks()
+    expect(ticks.length).toBeGreaterThan(0)
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(0.6)
+      expect(t).toBeLessThanOrEqual(0.9)
+    }
+  })
+})

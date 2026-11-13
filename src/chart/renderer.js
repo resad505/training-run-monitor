@@ -2,16 +2,24 @@
  * Canvas Renderer — Issue #14.
  *
  * Renders training runs on HTML5 Canvas while defending Data Truthfulness:
- *   1. Path breaks at every non-finite point (NaN, ±Infinity) and step gap.
- *      Explicit markers are drawn at these locations so missing data is never hidden.
- *   2. The smoothed curve (EMA) is always drawn over the raw min-max envelope,
- *      ensuring variance and spikes are visible even with aggressive smoothing.
+ *   1. Path breaks at every non-finite point (NaN, ±Infinity) and step gap,
+ *      using the downsampler's explicit break flags (never by comparing
+ *      decimated step indices). Explicit markers are drawn at these locations
+ *      so missing data is never hidden. Finite values that a log scale cannot
+ *      plot (<= 0) get their own marker.
+ *   2. The smoothed curve (EMA) is computed on the RAW series — so it does not
+ *      change with zoom level — and is always drawn over the raw min-max
+ *      envelope, ensuring variance and spikes stay visible.
  *   3. Rendering is crisp on high-DPI screens via devicePixelRatio backing-store scaling.
  *   4. GATE: No non-finite coordinate (NaN, Infinity, -Infinity) EVER reaches lineTo or moveTo.
  */
 
 import { createLinearScale, createLogScale } from './scale.js'
 import { downsample } from './downsample.js'
+import { ANOMALY, EXPECTED_STRIDE } from '../pipeline/sanitizer.js'
+
+/** Anomaly kinds drawn as a diamond on the point (gaps/non-finite have their own markers). */
+const DIAMOND_FLAGS = ANOMALY.OUTLIER | ANOMALY.COLLISION | ANOMALY.PLATEAU
 
 // ---------------------------------------------------------------------------
 // High-DPI Canvas Setup
@@ -33,7 +41,10 @@ export function setupCanvas(canvas, cssWidth, cssHeight, dpr = typeof window !==
   canvas.style.height = `${cssHeight}px`
 
   const ctx = canvas.getContext('2d')
-  if (ctx && typeof ctx.scale === 'function') {
+  // setTransform (not scale) so repeated calls on resize never compound.
+  if (ctx && typeof ctx.setTransform === 'function') {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  } else if (ctx && typeof ctx.scale === 'function') {
     ctx.scale(dpr, dpr)
   }
   return ctx
@@ -61,7 +72,7 @@ export function computeEMA(steps, values, weight = 0.8) {
 
   for (let i = 0; i < n; i++) {
     const v = values[i]
-    const isGap = i > 0 && steps[i] - steps[i - 1] > 1
+    const isGap = i > 0 && steps[i] - steps[i - 1] > EXPECTED_STRIDE
 
     if (!Number.isFinite(v) || isGap) {
       // Reset smoothing across gaps and non-finite values
@@ -99,6 +110,19 @@ export function computeEMA(steps, values, weight = 0.8) {
 
 const DEFAULT_MARGINS = { top: 20, right: 30, bottom: 40, left: 60 }
 
+/** EMA of the raw series, cached per (values buffer, weight). */
+const emaCache = new WeakMap()
+
+function rawEMA(series, weight) {
+  let byWeight = emaCache.get(series.values)
+  if (!byWeight) {
+    byWeight = new Map()
+    emaCache.set(series.values, byWeight)
+  }
+  if (!byWeight.has(weight)) byWeight.set(weight, computeEMA(series.steps, series.values, weight))
+  return byWeight.get(weight)
+}
+
 /**
  * Render a complete training-run chart to a Canvas 2D context.
  *
@@ -130,9 +154,11 @@ export function renderChart(ctx, series, options = {}) {
   // Clear canvas
   ctx.clearRect(0, 0, width, height)
 
+  const geometry = { margins, plotW, plotH }
+
   if (decimated.length === 0) {
     drawEmptyState(ctx, width, height, theme)
-    return { xScale: null, yScale: null, decimated }
+    return { xScale: null, yScale: null, decimated, ...geometry }
   }
 
   // 2. Compute scales
@@ -180,10 +206,11 @@ export function renderChart(ctx, series, options = {}) {
     }
   }
 
-  // Add small padding to Y domain for aesthetics
+  // Add small padding to Y domain for aesthetics. Only clamp at 0 when the
+  // data itself is non-negative, so negative values are never pushed off-plot.
   if (scaleType === 'linear') {
     const pad = (yMax - yMin) * 0.05
-    yMin = Math.max(0, yMin - pad) // Loss is typically non-negative
+    yMin = yMin >= 0 ? Math.max(0, yMin - pad) : yMin - pad
     yMax = yMax + pad
   }
 
@@ -200,28 +227,39 @@ export function renderChart(ctx, series, options = {}) {
   // 3. Render Grid & Axes
   renderGridAndAxes(ctx, xScale, yScale, margins, plotW, plotH, theme)
 
+  // Everything data-driven is clipped to the plot area (the window includes
+  // one extra point per side so lines reach the edges).
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(margins.left, margins.top, plotW, plotH)
+  ctx.clip()
+
   // 4. Render Raw Min-Max Envelope (underneath the lines)
   renderEnvelope(ctx, decimated.envelope, xScale, yScale)
 
   // 5. Render Raw Series Line with gap & non-finite breaks
-  renderBrokenLine(ctx, decimated.steps, decimated.values, xScale, yScale, {
+  renderBrokenLine(ctx, decimated, decimated.values, xScale, yScale, {
     color: 'rgba(59, 130, 246, 0.45)', // subtle raw line
     lineWidth: 1,
   })
 
-  // 6. Render Smoothed EMA Curve (drawn over the envelope)
+  // 6. Render Smoothed EMA Curve (computed on raw data, drawn over the envelope)
+  let smoothed = null
   if (smoothing > 0) {
-    const smoothedValues = computeEMA(decimated.steps, decimated.values, smoothing)
-    renderBrokenLine(ctx, decimated.steps, smoothedValues, xScale, yScale, {
+    const ema = rawEMA(series, smoothing)
+    smoothed = Float64Array.from(decimated.index, (i) => ema[i])
+    renderBrokenLine(ctx, decimated, smoothed, xScale, yScale, {
       color: '#2563eb', // bold primary curve
       lineWidth: 2,
     })
   }
 
-  // 7. Render Gap breaks and Non-finite Markers
-  renderMarkers(ctx, decimated.steps, decimated.values, decimated.anomaly, xScale, yScale, margins, plotH)
+  // 7. Render Gap breaks, Non-finite / non-plottable and Anomaly Markers
+  renderMarkers(ctx, decimated, xScale, yScale, margins, plotH)
 
-  return { xScale, yScale, decimated }
+  ctx.restore()
+
+  return { xScale, yScale, decimated, smoothed, ...geometry }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +338,8 @@ function renderGridAndAxes(ctx, xScale, yScale, margins, plotW, plotH, theme) {
 }
 
 /**
- * Render raw min-max envelope band.
+ * Render raw min-max envelope band, one closed polygon per segment so the
+ * band is never filled across a gap or a non-finite point.
  */
 function renderEnvelope(ctx, env, xScale, yScale) {
   if (!env || env.length < 2) return
@@ -308,47 +347,47 @@ function renderEnvelope(ctx, env, xScale, yScale) {
   ctx.save()
   ctx.fillStyle = 'rgba(59, 130, 246, 0.12)' // Translucent blue band
 
-  ctx.beginPath()
-  let inPath = false
-
-  // Forward along maxs
-  for (let i = 0; i < env.length; i++) {
-    const px = xScale.scale(env.steps[i])
-    const pyMax = yScale.scale(env.maxs[i])
-
-    if (px !== null && pyMax !== null && Number.isFinite(px) && Number.isFinite(pyMax)) {
-      if (!inPath) {
-        ctx.moveTo(px, pyMax)
-        inPath = true
-      } else {
-        ctx.lineTo(px, pyMax)
-      }
-    }
-  }
-
-  // Backward along mins
-  for (let i = env.length - 1; i >= 0; i--) {
-    const px = xScale.scale(env.steps[i])
-    const pyMin = yScale.scale(env.mins[i])
-
-    if (px !== null && pyMin !== null && Number.isFinite(px) && Number.isFinite(pyMin)) {
-      ctx.lineTo(px, pyMin)
-    }
-  }
-
-  if (inPath) {
-    ctx.closePath()
-    ctx.fill()
+  let segStart = 0
+  for (let i = 1; i <= env.length; i++) {
+    if (i < env.length && !env.breakBefore[i]) continue
+    fillEnvelopeSegment(ctx, env, segStart, i - 1, xScale, yScale)
+    segStart = i
   }
 
   ctx.restore()
 }
 
+function fillEnvelopeSegment(ctx, env, from, to, xScale, yScale) {
+  const upper = []
+  const lower = []
+  for (let i = from; i <= to; i++) {
+    const px = xScale.scale(env.steps[i])
+    const pyMax = yScale.scale(env.maxs[i])
+    const pyMin = yScale.scale(env.mins[i])
+    if (px === null || pyMax === null || pyMin === null) continue
+    upper.push([px, pyMax])
+    lower.push([px, pyMin])
+  }
+  if (upper.length < 2) return
+
+  ctx.beginPath()
+  ctx.moveTo(upper[0][0], upper[0][1])
+  for (let k = 1; k < upper.length; k++) ctx.lineTo(upper[k][0], upper[k][1])
+  for (let k = lower.length - 1; k >= 0; k--) ctx.lineTo(lower[k][0], lower[k][1])
+  ctx.closePath()
+  ctx.fill()
+}
+
 /**
  * Render a line series breaking paths at non-finite values and step gaps.
+ * Breaks come from the downsampler's explicit `breakBefore` flags.
  * Strictly guarantees that no non-finite coordinate ever reaches lineTo or moveTo.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {{ steps: ArrayLike<number>, breakBefore: ArrayLike<number> }} points
+ * @param {ArrayLike<number>} values
  */
-function renderBrokenLine(ctx, steps, values, xScale, yScale, { color, lineWidth }) {
+function renderBrokenLine(ctx, points, values, xScale, yScale, { color, lineWidth }) {
   ctx.save()
   ctx.strokeStyle = color
   ctx.lineWidth = lineWidth
@@ -357,25 +396,14 @@ function renderBrokenLine(ctx, steps, values, xScale, yScale, { color, lineWidth
 
   let inPath = false
 
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i]
-    const v = values[i]
+  for (let i = 0; i < points.length; i++) {
+    const px = xScale.scale(points.steps[i])
+    const py = yScale.scale(values[i])
+    const isValid = px !== null && py !== null
 
-    const isGap = i > 0 && steps[i] - steps[i - 1] > 1
-    const px = xScale.scale(s)
-    const py = yScale.scale(v)
-
-    const isValid =
-      px !== null &&
-      py !== null &&
-      Number.isFinite(px) &&
-      Number.isFinite(py)
-
-    if (!isValid || isGap) {
-      if (inPath) {
-        ctx.stroke()
-        inPath = false
-      }
+    if ((!isValid || points.breakBefore[i]) && inPath) {
+      ctx.stroke()
+      inPath = false
     }
 
     if (isValid) {
@@ -397,55 +425,37 @@ function renderBrokenLine(ctx, steps, values, xScale, yScale, { color, lineWidth
 }
 
 /**
- * Draw explicit markers for non-finite points (NaN, ±Infinity), gaps, and anomalies.
+ * Draw explicit markers for non-finite points (NaN, ±Infinity), values a log
+ * scale cannot plot (<= 0), step gaps, and anomalies.
  */
-function renderMarkers(ctx, steps, values, anomaly, xScale, yScale, margins, plotH) {
+function renderMarkers(ctx, points, xScale, yScale, margins, plotH) {
   ctx.save()
+  const { steps, values, anomaly, gapBefore } = points
 
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i]
+  for (let i = 0; i < points.length; i++) {
     const v = values[i]
-    const a = anomaly ? anomaly[i] : 0
-    const px = xScale.scale(s)
+    const a = anomaly[i]
+    const px = xScale.scale(steps[i])
+    if (px === null) continue
 
-    if (px === null || !Number.isFinite(px)) continue
-
-    // 1. Non-finite marker (NaN or ±Infinity)
-    if (!Number.isFinite(v)) {
+    // 1. Non-finite marker (NaN or ±Infinity), or finite but not plottable (log <= 0)
+    const notPlottable = Number.isFinite(v) && !yScale.isPlottable(v)
+    if (!Number.isFinite(v) || notPlottable) {
       const isNaNVal = Number.isNaN(v)
-      const badgeText = isNaNVal ? 'NaN' : v > 0 ? '+∞' : '-∞'
-      const markerColor = isNaNVal ? '#ef4444' : '#f59e0b'
-
-      // Dashed vertical line across plot area indicating missing/infinite point
-      ctx.strokeStyle = markerColor
-      ctx.lineWidth = 1
-      ctx.setLineDash([3, 3])
-      ctx.beginPath()
-      ctx.moveTo(px, margins.top)
-      ctx.lineTo(px, margins.top + plotH)
-      ctx.stroke()
-      ctx.setLineDash([])
-
-      // Badge at top of the line
-      ctx.fillStyle = markerColor
-      ctx.fillRect(px - 12, margins.top + 2, 24, 14)
-      ctx.fillStyle = '#ffffff'
-      ctx.font = 'bold 9px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(badgeText, px, margins.top + 9)
+      const badgeText = notPlottable ? '≤0' : isNaNVal ? 'NaN' : v > 0 ? '+∞' : '-∞'
+      const markerColor = isNaNVal ? '#ef4444' : notPlottable ? '#8b5cf6' : '#f59e0b'
+      drawVerticalBadge(ctx, px, badgeText, markerColor, margins, plotH)
     }
 
-    // 2. Step gap indicator
-    if (i > 0 && steps[i] - steps[i - 1] > 1) {
+    // 2. Step gap indicator (shade from the last point before the gap)
+    if (gapBefore[i] && i > 0) {
       const prevPx = xScale.scale(steps[i - 1])
-      if (prevPx !== null && Number.isFinite(prevPx)) {
-        // Shaded gap region
+      if (prevPx !== null) {
         ctx.fillStyle = 'rgba(239, 68, 68, 0.07)'
         ctx.fillRect(prevPx, margins.top, px - prevPx, plotH)
 
-        // Dotted boundary line
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'
+        ctx.lineWidth = 1
         ctx.setLineDash([2, 4])
         ctx.beginPath()
         ctx.moveTo(px, margins.top)
@@ -455,15 +465,13 @@ function renderMarkers(ctx, steps, values, anomaly, xScale, yScale, margins, plo
       }
     }
 
-    // 3. Anomaly marker (outlier spikes, collisions)
-    if (a === 1 && Number.isFinite(v)) {
+    // 3. Anomaly marker (outliers, collisions, plateaus)
+    if (a & DIAMOND_FLAGS) {
       const py = yScale.scale(v)
-      if (py !== null && Number.isFinite(py)) {
-        // Draw diamond marker
-        ctx.fillStyle = '#ef4444' // Red/amber
+      if (py !== null) {
+        ctx.fillStyle = '#ef4444'
         ctx.strokeStyle = '#ffffff'
         ctx.lineWidth = 1.5
-
         ctx.beginPath()
         ctx.moveTo(px, py - 5)
         ctx.lineTo(px + 5, py)
@@ -477,4 +485,23 @@ function renderMarkers(ctx, steps, values, anomaly, xScale, yScale, margins, plo
   }
 
   ctx.restore()
+}
+
+function drawVerticalBadge(ctx, px, text, color, margins, plotH) {
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 3])
+  ctx.beginPath()
+  ctx.moveTo(px, margins.top)
+  ctx.lineTo(px, margins.top + plotH)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  ctx.fillStyle = color
+  ctx.fillRect(px - 12, margins.top + 2, 24, 14)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 9px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, px, margins.top + 9)
 }
