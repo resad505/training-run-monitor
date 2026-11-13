@@ -7,6 +7,7 @@
 export { createLinearScale, createLogScale, formatTickNumber } from './scale.js'
 export { downsample, binarySearchFirstGe, binarySearchLastLe } from './downsample.js'
 export { renderChart, setupCanvas, computeEMA } from './renderer.js'
+export { downsampleInWorker } from './worker-downsample.js'
 export {
   createViewState,
   inspectRawPoint,
