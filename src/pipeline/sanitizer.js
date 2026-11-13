@@ -5,195 +5,209 @@
  * a normalised, columnar representation ready for the canvas engine.
  *
  * Pipeline (applied in order):
- *   1. Sort by step index (guards against out-of-order / duplicate injection).
- *   2. Deduplicate: when two entries share the same step index, the LAST one
- *      seen (after sort, so last in original arrival order among same step)
- *      wins (last-write-wins). The winning entry for a colliding step gets
- *      `anomaly: true`. Collisions are counted.
- *   3. Gap detection: after dedup, detect step index gaps (jump > 1). Flag the
- *      step immediately after the gap with `anomaly: true`. Count gaps.
- *   4. Flag anomalies: mark each step as an anomaly when any metric is NaN,
- *      non-finite, or is a statistical outlier (|loss − median| > MAD_THRESHOLD
- *      × MAD in a rolling window of 20 steps). Anomalies are NOT removed —
- *      the renderer decides how to draw them. The `corrupt` field from the
- *      generator is NOT used for anomaly detection.
- *   5. Emit columnar output: parallel typed-array buffers — one element per
- *      step — so downstream code can slice, transfer to a Worker, or pass
- *      directly to WebGL without object allocation.
+ *   1. Sort by step index. The sort is stable, so entries that share a step
+ *      index keep their arrival order.
+ *   2. Deduplicate, last-write-wins by arrival order: for a repeated step
+ *      index, the entry that arrived last is kept. The kept entry is flagged
+ *      COLLISION and every collision is counted.
+ *   3. Gap detection: a jump between consecutive step indices larger than
+ *      EXPECTED_STRIDE flags the step after the gap with GAP and is counted.
+ *   4. Value checks on `loss` (the generator's `corrupt` field is never read):
+ *        NON_FINITE — NaN or ±Infinity.
+ *        PLATEAU    — PLATEAU_MIN_RUN or more consecutive steps with exactly
+ *                     the same finite loss. Real float losses essentially never
+ *                     repeat bit-for-bit, so this indicates a stuck logger or
+ *                     optimiser.
+ *        OUTLIER    — the residual against a rolling median (TREND_WINDOW
+ *                     neighbours, which follows the decaying trend; at the
+ *                     first/last steps a Theil–Sen line through the nearest
+ *                     EDGE_FIT neighbours) exceeds OUTLIER_THRESHOLD robust
+ *                     standard deviations. The step itself is excluded from
+ *                     its own baseline. The robust
+ *                     σ is 1.4826 × MAD of the residuals, estimated per block
+ *                     of SCALE_BLOCK steps so it adapts to the run's noise.
+ *      Values are never dropped or replaced.
+ *   5. Emit columnar output: one Float64Array per field plus a Uint8Array of
+ *      anomaly flags (bitmask of ANOMALY values; 0 = clean).
  *
  * Design constraints
  *   - No external dependencies.
  *   - Pure functions only (same input → same output).
- *   - NaN is preserved in the output buffers; callers must guard with
- *     Number.isFinite() before arithmetic.
- *   - The `anomaly` column uses a Uint8Array with 1 for true, 0 for false.
+ *   - NaN / ±Infinity are preserved in the output buffers; callers must guard
+ *     with Number.isFinite() before arithmetic.
  */
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/**
- * Z-score threshold (kept for API compatibility).
- * Detection now uses MAD instead of z-score; see MAD_THRESHOLD.
- */
-export const Z_THRESHOLD = 3.5
+/** Anomaly bit flags stored in the `anomaly` Uint8Array. */
+export const ANOMALY = Object.freeze({
+  NON_FINITE: 1,
+  OUTLIER: 2,
+  COLLISION: 4,
+  GAP: 8,
+  PLATEAU: 16,
+})
 
-/**
- * Median Absolute Deviation threshold for rolling outlier detection.
- * Steps where |loss − median| > MAD_THRESHOLD × MAD are flagged as anomalies.
- */
-export const MAD_THRESHOLD = 3.5
+/** Expected distance between consecutive step indices. Larger jumps are gaps. */
+export const EXPECTED_STRIDE = 1
 
-/**
- * Rolling window size for the median + MAD outlier detection.
- */
-const ROLLING_WINDOW = 20
+/** Residual threshold, in robust standard deviations, for OUTLIER. */
+export const OUTLIER_THRESHOLD = 3.5
+
+/** Rolling-median window (odd) used to follow the loss trend. */
+export const TREND_WINDOW = 11
+
+/** Block size over which the residual noise scale (robust σ) is estimated. */
+export const SCALE_BLOCK = 1024
+
+/** Minimum number of consecutive identical losses flagged as PLATEAU. */
+export const PLATEAU_MIN_RUN = 3
+
+/** Neighbours used for the robust line fit at the first/last steps. */
+const EDGE_FIT = 6
+
+/** Converts MAD to a standard-deviation estimate for Gaussian noise. */
+const MAD_TO_SIGMA = 1.4826
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the median of an array of numbers (must be pre-sorted or unsorted).
- * Returns 0 for an empty array.
- *
- * @param {number[]} values
+ * Median of the first `n` entries of a scratch buffer (sorted in place).
+ * @param {Float64Array} buf
+ * @param {number} n
  * @returns {number}
  */
-function median(values) {
-  if (values.length === 0) return 0
-  const sorted = values.slice().sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+function medianInPlace(buf, n) {
+  const view = buf.subarray(0, n).sort()
+  const mid = n >> 1
+  return n % 2 === 0 ? (view[mid - 1] + view[mid]) / 2 : view[mid]
 }
 
 /**
- * Compute the Median Absolute Deviation (MAD) of an array of finite numbers.
- * MAD = median(|x_i − median(x)|)
- *
- * @param {number[]} values - Finite numbers only.
- * @param {number} med      - Pre-computed median of values.
- * @returns {number}
+ * Sort by step index (stable) and resolve duplicates last-write-wins.
+ * @param {Array<{ step: number }>} raw
+ * @returns {{ entries: Array<object>, collided: Uint8Array, collisions: number }}
  */
-function mad(values, med) {
-  if (values.length === 0) return 0
-  const deviations = values.map((v) => Math.abs(v - med))
-  return median(deviations)
-}
-
-/**
- * Sort a step array by step index, ascending.
- * Returns a new array; does not mutate the input.
- *
- * @param {Array<{ step: number }>} steps
- * @returns {Array<{ step: number }>}
- */
-function sortSteps(steps) {
-  return steps.slice().sort((a, b) => a.step - b.step)
-}
-
-/**
- * Remove duplicate step indices using last-write-wins semantics.
- * When two entries share the same step index, the LAST one in the sorted
- * order wins. The winning entry for any colliding step index is flagged
- * with a `_collision` marker so the caller can set `anomaly: true`.
- *
- * Returns the deduped array and a collision count.
- *
- * @param {Array<{ step: number }>} sorted - Already sorted ascending.
- * @returns {{ deduped: Array<{ step: number }>, collisions: number }}
- */
-function dedupeSteps(sorted) {
-  const seen = new Map() // step index → index in `out`
-  const out = []
+function sortAndDedupe(raw) {
+  const sorted = raw.slice().sort((a, b) => a.step - b.step)
+  const entries = []
+  const collidedList = []
   let collisions = 0
 
   for (const entry of sorted) {
-    if (!seen.has(entry.step)) {
-      seen.set(entry.step, out.length)
-      out.push({ ...entry, _collision: false })
-    } else {
-      // Last-write-wins: replace the existing entry with this one.
-      const idx = seen.get(entry.step)
-      out[idx] = { ...entry, _collision: true }
+    const last = entries.length - 1
+    if (last >= 0 && entries[last].step === entry.step) {
+      // Same step; stable sort means `entry` arrived later → it wins.
+      entries[last] = entry
+      collidedList[last] = 1
       collisions++
+    } else {
+      entries.push(entry)
+      collidedList.push(0)
     }
   }
 
-  return { deduped: out, collisions }
+  return { entries, collided: Uint8Array.from(collidedList), collisions }
 }
 
 /**
- * Detect step-index gaps (jumps > 1 between consecutive step indices).
- * Flags the step immediately after a gap with `_gap: true`.
- * Returns the annotated array and a gap count.
- *
- * @param {Array<{ step: number }>} deduped
- * @returns {{ gapped: Array<{ step: number, _gap: boolean }>, gaps: number }}
+ * Predict loss at index `at` from a Theil–Sen line fitted to the finite
+ * values in [lo, hi], excluding `at` itself. Returns NaN with no data.
+ * @param {Float64Array} loss
+ * @param {number} lo
+ * @param {number} hi
+ * @param {number} at
+ * @returns {number}
  */
-function detectGaps(deduped) {
-  const gapped = deduped.map((s) => ({ ...s, _gap: false }))
-  let gaps = 0
+function theilSenAt(loss, lo, hi, at) {
+  const xs = []
+  for (let j = lo; j <= hi; j++) {
+    if (j !== at && Number.isFinite(loss[j])) xs.push(j)
+  }
+  if (xs.length === 0) return NaN
+  if (xs.length === 1) return loss[xs[0]]
 
-  for (let i = 1; i < gapped.length; i++) {
-    if (gapped[i].step - gapped[i - 1].step > 1) {
-      gapped[i]._gap = true
-      gaps++
+  const slopes = new Float64Array((xs.length * (xs.length - 1)) / 2)
+  let k = 0
+  for (let a = 0; a < xs.length; a++) {
+    for (let b = a + 1; b < xs.length; b++) {
+      slopes[k++] = (loss[xs[b]] - loss[xs[a]]) / (xs[b] - xs[a])
     }
   }
-
-  return { gapped, gaps }
+  const slope = medianInPlace(slopes, k)
+  const intercepts = Float64Array.from(xs, (x) => loss[x] - slope * x)
+  return medianInPlace(intercepts, intercepts.length) + slope * at
 }
 
 /**
- * Flag anomalies based on three criteria (the `corrupt` field is NOT used):
- *   a) the loss value is non-finite (NaN, ±Infinity), OR
- *   b) the step was flagged by collision or gap detection, OR
- *   c) the loss is a rolling-MAD outlier: |loss − median| > MAD_THRESHOLD × MAD
- *      within a window of ROLLING_WINDOW steps centred on the current step.
- *      If MAD is 0 and the value is non-finite, it is flagged.
- *
- * Returns a new array with added `anomaly: boolean` field on each step.
- * Internal `_collision` and `_gap` markers are stripped.
- *
- * @param {Array<{ loss: number, _collision: boolean, _gap: boolean }>} steps
- * @returns {Array<{ loss: number, anomaly: boolean }>}
+ * Flag OUTLIER using rolling-median residuals and a block-wise robust σ.
+ * @param {Float64Array} loss
+ * @param {Uint8Array} flags - mutated
  */
-function flagAnomalies(steps) {
-  const n = steps.length
-  const half = Math.floor(ROLLING_WINDOW / 2)
+function flagOutliers(loss, flags) {
+  const n = loss.length
+  const half = TREND_WINDOW >> 1
+  const win = new Float64Array(TREND_WINDOW)
+  const residual = new Float64Array(n).fill(NaN)
 
-  return steps.map((s, i) => {
-    // Strip internal markers from output.
-    // eslint-disable-next-line no-unused-vars
-    const { _collision, _gap, ...rest } = s
-
-    const nonFinite = !Number.isFinite(s.loss)
-    const isCollisionOrGap = Boolean(s._collision || s._gap)
-
-    // Build rolling window of finite loss values.
-    const lo = Math.max(0, i - half)
-    const hi = Math.min(n - 1, i + half)
-    const windowFinite = []
-    for (let j = lo; j <= hi; j++) {
-      if (Number.isFinite(steps[j].loss)) windowFinite.push(steps[j].loss)
-    }
-
-    let outlier = false
-    if (!nonFinite && windowFinite.length > 0) {
-      const med = median(windowFinite)
-      const madVal = mad(windowFinite, med)
-      if (madVal === 0) {
-        // If all window values are identical, flag only genuinely different values.
-        outlier = s.loss !== med
-      } else {
-        outlier = Math.abs(s.loss - med) > MAD_THRESHOLD * madVal
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(loss[i])) continue
+    // The step itself is left out of its own baseline, otherwise it pulls the
+    // estimate toward itself, shrinks the residuals and hides the outlier.
+    if (i >= half && i < n - half) {
+      let k = 0
+      for (let j = i - half; j <= i + half; j++) {
+        if (j !== i && Number.isFinite(loss[j])) win[k++] = loss[j]
       }
+      if (k > 0) residual[i] = loss[i] - medianInPlace(win, k)
+    } else {
+      // Near the edges a one-sided median is biased by the trend, so
+      // extrapolate a robust line through the nearest EDGE_FIT neighbours
+      // instead (few points, so the curve's bend barely matters).
+      const lo = Math.max(0, Math.min(i - (EDGE_FIT >> 1), n - 1 - EDGE_FIT))
+      const hi = Math.min(n - 1, lo + EDGE_FIT)
+      const predicted = theilSenAt(loss, lo, hi, i)
+      if (Number.isFinite(predicted)) residual[i] = loss[i] - predicted
     }
+  }
 
-    return { ...rest, anomaly: nonFinite || isCollisionOrGap || outlier }
-  })
+  const scratch = new Float64Array(Math.min(SCALE_BLOCK, n))
+  for (let start = 0; start < n; start += SCALE_BLOCK) {
+    const end = Math.min(start + SCALE_BLOCK, n)
+    let k = 0
+    for (let i = start; i < end; i++) {
+      if (Number.isFinite(residual[i])) scratch[k++] = Math.abs(residual[i])
+    }
+    if (k === 0) continue
+    const sigma = MAD_TO_SIGMA * medianInPlace(scratch, k)
+    const limit = OUTLIER_THRESHOLD * sigma
+    for (let i = start; i < end; i++) {
+      const r = Math.abs(residual[i])
+      // With zero noise any deviation from the trend is an outlier.
+      if (sigma === 0 ? r > 0 : r > limit) flags[i] |= ANOMALY.OUTLIER
+    }
+  }
+}
+
+/**
+ * Flag PLATEAU: runs of PLATEAU_MIN_RUN+ consecutive identical finite losses.
+ * @param {Float64Array} loss
+ * @param {Uint8Array} flags - mutated
+ */
+function flagPlateaus(loss, flags) {
+  const n = loss.length
+  let start = 0
+  for (let i = 1; i <= n; i++) {
+    if (i < n && Number.isFinite(loss[i]) && loss[i] === loss[start]) continue
+    if (i - start >= PLATEAU_MIN_RUN) {
+      for (let j = start; j < i; j++) flags[j] |= ANOMALY.PLATEAU
+    }
+    start = i
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,53 +219,50 @@ function flagAnomalies(steps) {
  * @property {number}       id         - Run id (passed through from the input).
  * @property {number}       length     - Number of steps after dedup.
  * @property {Float64Array} steps      - Step indices (integers, as floats).
- * @property {Float64Array} loss       - Loss values; NaN where data is missing.
+ * @property {Float64Array} loss       - Loss values; NaN/±Infinity kept as-is.
  * @property {Float64Array} lr         - Learning rate values.
  * @property {Float64Array} grad_norm  - Gradient L2 norm values.
- * @property {Uint8Array}   anomaly    - 1 = anomaly, 0 = clean.
- * @property {number}       collisions - Number of duplicate step indices resolved.
+ * @property {Uint8Array}   anomaly    - Bitmask of ANOMALY flags; 0 = clean.
+ * @property {number}       collisions - Number of duplicate step entries resolved.
  * @property {number}       gaps       - Number of step-index gaps detected.
  */
 
 /**
  * Sanitize a single run produced by `generateRun()`.
  *
- * @param {{ id: number, steps: Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }> }} run
+ * @param {{ id: number, steps: Array<{ step: number, loss: number, lr: number, grad_norm: number }> }} run
  * @returns {SanitizedRun}
  */
 export function sanitizeRun(run) {
-  const sorted = sortSteps(run.steps)
-  const { deduped, collisions } = dedupeSteps(sorted)
-  const { gapped, gaps } = detectGaps(deduped)
-  const flagged = flagAnomalies(gapped)
+  const { entries, collided, collisions } = sortAndDedupe(run.steps)
 
-  const n = flagged.length
-  const stepsBuf = new Float64Array(n)
-  const lossBuf = new Float64Array(n)
-  const lrBuf = new Float64Array(n)
-  const gradNormBuf = new Float64Array(n)
-  const anomalyBuf = new Uint8Array(n)
+  const n = entries.length
+  const steps = new Float64Array(n)
+  const loss = new Float64Array(n)
+  const lr = new Float64Array(n)
+  const gradNorm = new Float64Array(n)
+  const anomaly = new Uint8Array(n)
+  let gaps = 0
 
   for (let i = 0; i < n; i++) {
-    const s = flagged[i]
-    stepsBuf[i] = s.step
-    lossBuf[i] = s.loss           // NaN propagates naturally into Float64Array
-    lrBuf[i] = s.lr ?? NaN
-    gradNormBuf[i] = s.grad_norm ?? NaN
-    anomalyBuf[i] = s.anomaly ? 1 : 0
+    const e = entries[i]
+    steps[i] = e.step
+    loss[i] = e.loss
+    lr[i] = e.lr ?? NaN
+    gradNorm[i] = e.grad_norm ?? NaN
+
+    if (collided[i]) anomaly[i] |= ANOMALY.COLLISION
+    if (!Number.isFinite(e.loss)) anomaly[i] |= ANOMALY.NON_FINITE
+    if (i > 0 && steps[i] - steps[i - 1] > EXPECTED_STRIDE) {
+      anomaly[i] |= ANOMALY.GAP
+      gaps++
+    }
   }
 
-  return {
-    id: run.id,
-    length: n,
-    steps: stepsBuf,
-    loss: lossBuf,
-    lr: lrBuf,
-    grad_norm: gradNormBuf,
-    anomaly: anomalyBuf,
-    collisions,
-    gaps,
-  }
+  flagPlateaus(loss, anomaly)
+  flagOutliers(loss, anomaly)
+
+  return { id: run.id, length: n, steps, loss, lr, grad_norm: gradNorm, anomaly, collisions, gaps }
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   LARGE_RUN_ID,
   LARGE_RUN_STEPS,
   LARGE_RUN_SPIKE_STEP,
+  KINDS,
 } from './generator.js'
 
 // ---------------------------------------------------------------------------
@@ -174,57 +175,51 @@ describe('generateRun — corruption injection', () => {
     }
   })
 
-  it('infinity kind produces ±Infinity loss in at least one run across dataset', () => {
-    // Run several runs to ensure we hit an infinity injection.
-    let found = false
-    for (let id = 0; id < 18; id++) {
-      const run = generateRun(id)
-      if (run.steps.some((s) => s.corrupt && !isFinite(s.loss) && !isNaN(s.loss))) {
-        found = true
-        break
-      }
+  it('every corruption kind appears in the standard dataset', () => {
+    const seen = new Set()
+    for (let id = 0; id < LARGE_RUN_ID; id++) {
+      for (const m of generateRun(id).manifest) seen.add(m.kind)
     }
-    // If not found with default seeds, verify the kind is wired by checking
-    // that +/-Infinity is a valid loss when injected by calling with a known seed
-    // that hits 'infinity'. We accept the test if any run has it, or if the
-    // manifest confirms it.
-    // As a fallback, test a run where we know infinity is in the manifest.
-    if (!found) {
-      for (let id = 0; id < 18; id++) {
-        const run = generateRun(id)
-        if (run.manifest.some((m) => m.kind === 'infinity')) {
-          // The manifest says infinity was injected; verify the step has non-finite loss.
-          const infEntry = run.manifest.find((m) => m.kind === 'infinity')
-          const step = run.steps.find((s) => s.step === infEntry.pos)
-          if (step) {
-            expect(!isFinite(step.loss) && !isNaN(step.loss)).toBe(true)
-            found = true
-            break
-          }
-        }
-      }
-    }
-    // At minimum the KINDS array must include 'infinity' — verified by manifest presence
-    // across many runs. If neither condition is met, we still pass as the rng
-    // may not have selected it in this seed family; skip gracefully.
-    expect(typeof found).toBe('boolean')
+    expect([...seen].sort()).toEqual([...KINDS].sort())
   })
 
-  it('gap kind produces step-index gaps in at least one run', () => {
-    let found = false
-    for (let id = 0; id < 18; id++) {
+  it('infinity events set loss to ±Infinity', () => {
+    let checked = 0
+    for (let id = 0; id < LARGE_RUN_ID; id++) {
       const run = generateRun(id)
-      if (run.manifest.some((m) => m.kind === 'gap')) {
-        // Verify that the step array has a jump > 1 somewhere.
-        const stepIndices = run.steps.map((s) => s.step)
-        const hasGap = stepIndices.some((v, i) => i > 0 && v - stepIndices[i - 1] > 1)
-        expect(hasGap).toBe(true)
-        found = true
-        break
+      for (const m of run.manifest.filter((e) => e.kind === 'infinity')) {
+        const step = run.steps.find((s) => s.step === m.pos)
+        expect(Math.abs(step.loss)).toBe(Infinity)
+        checked++
       }
     }
-    // If we never drew a gap in runs 0–17 by chance, that's fine.
-    expect(typeof found).toBe('boolean')
+    expect(checked).toBeGreaterThan(0)
+  })
+
+  it('gap events leave a jump > 1 right after the recorded step', () => {
+    let checked = 0
+    for (let id = 0; id < LARGE_RUN_ID; id++) {
+      const run = generateRun(id)
+      const present = new Set(run.steps.map((s) => s.step))
+      for (const m of run.manifest.filter((e) => e.kind === 'gap')) {
+        expect(present.has(m.pos)).toBe(true)
+        expect(present.has(m.pos + 1)).toBe(false)
+        checked++
+      }
+    }
+    expect(checked).toBeGreaterThan(0)
+  })
+
+  it('unsorted events make arrival order non-monotonic', () => {
+    let checked = 0
+    for (let id = 0; id < LARGE_RUN_ID; id++) {
+      const run = generateRun(id)
+      if (!run.manifest.some((e) => e.kind === 'unsorted')) continue
+      const arrival = run.steps.map((s) => s.step)
+      expect(arrival.some((v, i) => i > 0 && v < arrival[i - 1])).toBe(true)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(0)
   })
 })
 
@@ -250,7 +245,7 @@ describe('generateRun — manifest', () => {
   })
 
   it('manifest kind values are from the known KINDS set', () => {
-    const KNOWN_KINDS = new Set(['spike', 'dropout', 'plateau', 'duplicate', 'infinity', 'gap'])
+    const KNOWN_KINDS = new Set(['spike', 'dropout', 'plateau', 'duplicate', 'infinity', 'gap', 'unsorted'])
     for (let id = 0; id < 10; id++) {
       const run = generateRun(id)
       for (const entry of run.manifest) {

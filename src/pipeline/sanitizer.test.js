@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { generateRun, generateDataset, STEPS_PER_RUN } from './generator.js'
-import { sanitizeRun, sanitizeDataset, Z_THRESHOLD, MAD_THRESHOLD } from './sanitizer.js'
+import {
+  generateRun,
+  generateDataset,
+  STEPS_PER_RUN,
+  LARGE_RUN_ID,
+  LARGE_RUN_STEPS,
+  LARGE_RUN_SPIKE_STEP,
+} from './generator.js'
+import {
+  sanitizeRun,
+  sanitizeDataset,
+  ANOMALY,
+  EXPECTED_STRIDE,
+  OUTLIER_THRESHOLD,
+  PLATEAU_MIN_RUN,
+} from './sanitizer.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -9,6 +23,16 @@ import { sanitizeRun, sanitizeDataset, Z_THRESHOLD, MAD_THRESHOLD } from './sani
 /** Build a minimal raw step for unit tests that don't need a full run. */
 function makeStep(step, loss, lr = 1e-3, grad_norm = 0.5, corrupt = false) {
   return { step, loss, lr, grad_norm, corrupt }
+}
+
+/** Loss with small, non-repeating variation (avoids triggering PLATEAU). */
+function wobble(i, base = 1.0) {
+  return base + ((i * 7) % 5) * 0.002
+}
+
+/** True when `flag` is set in an anomaly bitmask value. */
+function has(value, flag) {
+  return (value & flag) !== 0
 }
 
 /** Build a minimal run object. */
@@ -149,7 +173,8 @@ describe('sanitizeRun — deduplication (last-write-wins)', () => {
     const result = sanitizeRun(raw)
     expect(result.length).toBe(1)
     // The winning (last) entry must be flagged anomaly due to collision
-    expect(result.anomaly[0]).toBe(1)
+    expect(has(result.anomaly[0], ANOMALY.COLLISION)).toBe(true)
+    expect(result.loss[0]).toBeCloseTo(1.1)
   })
 
   it('collisions counter equals number of duplicate resolutions', () => {
@@ -188,7 +213,8 @@ describe('sanitizeRun — gap detection', () => {
     const raw = makeRun(0, steps)
     const result = sanitizeRun(raw)
     // Step 5 (index 2) should be flagged as anomaly (after gap)
-    expect(result.anomaly[2]).toBe(1)
+    expect(has(result.anomaly[2], ANOMALY.GAP)).toBe(true)
+    expect(has(result.anomaly[1], ANOMALY.GAP)).toBe(false)
   })
 
   it('gaps counter equals number of gaps detected', () => {
@@ -210,6 +236,10 @@ describe('sanitizeRun — gap detection', () => {
     expect(result.gaps).toBe(0)
   })
 
+  it('EXPECTED_STRIDE is documented as 1', () => {
+    expect(EXPECTED_STRIDE).toBe(1)
+  })
+
   it('consecutive steps (stride 1) are not flagged as gaps', () => {
     const steps = Array.from({ length: 10 }, (_, i) => makeStep(i, 1.0 - i * 0.05))
     const raw = makeRun(0, steps)
@@ -223,10 +253,11 @@ describe('sanitizeRun — gap detection', () => {
 // ---------------------------------------------------------------------------
 
 describe('sanitizeRun — anomaly flagging', () => {
-  it('anomaly column contains only 0 or 1', () => {
+  it('anomaly column contains only known flag bits', () => {
+    const known = Object.values(ANOMALY).reduce((a, b) => a | b, 0)
     const result = sanitizeRun(generateRun(1))
     for (const v of result.anomaly) {
-      expect(v === 0 || v === 1).toBe(true)
+      expect(v & ~known).toBe(0)
     }
   })
 
@@ -235,7 +266,7 @@ describe('sanitizeRun — anomaly flagging', () => {
       makeStep(0, 1.0), makeStep(1, NaN, NaN, NaN, true), makeStep(2, 0.8),
     ])
     const result = sanitizeRun(raw)
-    expect(result.anomaly[1]).toBe(1)
+    expect(has(result.anomaly[1], ANOMALY.NON_FINITE)).toBe(true)
   })
 
   it('Infinity loss is flagged as anomaly', () => {
@@ -243,51 +274,142 @@ describe('sanitizeRun — anomaly flagging', () => {
       makeStep(0, 1.0), makeStep(1, Infinity, 1e-3, 0.5, true), makeStep(2, 0.9),
     ])
     const result = sanitizeRun(raw)
-    expect(result.anomaly[1]).toBe(1)
+    expect(has(result.anomaly[1], ANOMALY.NON_FINITE)).toBe(true)
+    expect(result.loss[1]).toBe(Infinity)
+  })
+
+  it('-Infinity loss is flagged and preserved', () => {
+    const raw = makeRun(0, [makeStep(0, 1.0), makeStep(1, -Infinity), makeStep(2, 0.9)])
+    const result = sanitizeRun(raw)
+    expect(has(result.anomaly[1], ANOMALY.NON_FINITE)).toBe(true)
+    expect(result.loss[1]).toBe(-Infinity)
   })
 
   it('corrupt-flagged step with normal finite loss is NOT flagged as anomaly by sanitizer', () => {
     // 50 uniform steps, one marked corrupt=true but with normal loss
-    const steps = Array.from({ length: 50 }, (_, i) => makeStep(i, 1.0, 1e-3, 0.5, false))
+    const steps = Array.from({ length: 50 }, (_, i) => makeStep(i, wobble(i), 1e-3, 0.5, false))
     // Mark step 25 as corrupt but keep its loss normal
-    steps[25] = makeStep(25, 1.0, 1e-3, 0.5, true)
+    steps[25] = makeStep(25, wobble(25), 1e-3, 0.5, true)
     const raw = makeRun(0, steps)
     const result = sanitizeRun(raw)
     // The sanitizer must NOT use the corrupt flag; a normal finite loss must not be flagged
     expect(result.anomaly[25]).toBe(0)
   })
 
-  it(`rolling MAD outlier beyond ${MAD_THRESHOLD} × MAD is flagged as anomaly`, () => {
+  it(`outlier beyond ${OUTLIER_THRESHOLD} robust σ is flagged`, () => {
     // 99 normal steps around loss=1.0, then one spike at 100.0
-    const steps = Array.from({ length: 99 }, (_, i) => makeStep(i, 1.0 + (i % 3) * 0.01))
+    const steps = Array.from({ length: 99 }, (_, i) => makeStep(i, wobble(i)))
     steps.push(makeStep(99, 100.0)) // extreme outlier, not marked corrupt
-    const raw = makeRun(0, steps)
-    const result = sanitizeRun(raw)
-    expect(result.anomaly[99]).toBe(1)
+    const result = sanitizeRun(makeRun(0, steps))
+    expect(has(result.anomaly[99], ANOMALY.OUTLIER)).toBe(true)
+  })
+
+  it('a small late spike on a decaying curve is flagged (trend-relative)', () => {
+    // Steep early decay; a global statistic would hide a late 3x spike.
+    const steps = Array.from({ length: 200 }, (_, i) =>
+      makeStep(i, 0.1 + 3 * Math.exp(-i / 30) + (((i * 7) % 5) - 2) * 0.002),
+    )
+    steps[170] = makeStep(170, steps[170].loss * 3)
+    const result = sanitizeRun(makeRun(0, steps))
+    expect(has(result.anomaly[170], ANOMALY.OUTLIER)).toBe(true)
+    // ...and the steep early part is not flagged.
+    expect(Array.from(result.anomaly.slice(0, 20)).every((v) => v === 0)).toBe(true)
   })
 
   it('normal steps are not flagged as anomalies', () => {
-    // Uniform loss — no outliers, no corrupt, no NaN
-    const steps = Array.from({ length: 50 }, (_, i) => makeStep(i, 1.0))
-    const raw = makeRun(0, steps)
-    const result = sanitizeRun(raw)
+    const steps = Array.from({ length: 50 }, (_, i) => makeStep(i, wobble(i)))
+    const result = sanitizeRun(makeRun(0, steps))
     for (const v of result.anomaly) {
       expect(v).toBe(0)
     }
+  })
+
+  it(`${PLATEAU_MIN_RUN}+ identical consecutive losses are flagged as PLATEAU`, () => {
+    const steps = Array.from({ length: 40 }, (_, i) => makeStep(i, wobble(i)))
+    for (let i = 20; i < 25; i++) steps[i] = makeStep(i, 0.777)
+    const result = sanitizeRun(makeRun(0, steps))
+    for (let i = 0; i < 40; i++) {
+      expect(has(result.anomaly[i], ANOMALY.PLATEAU)).toBe(i >= 20 && i < 25)
+    }
+  })
+
+  it('two identical consecutive losses are not a plateau', () => {
+    const steps = Array.from({ length: 40 }, (_, i) => makeStep(i, wobble(i)))
+    steps[21] = makeStep(21, steps[20].loss)
+    const result = sanitizeRun(makeRun(0, steps))
+    expect(has(result.anomaly[20], ANOMALY.PLATEAU)).toBe(false)
   })
 
   it('real dataset has anomalies in every run (excluding 1M run for performance)', () => {
     const dataset = generateDataset().filter((r) => r.id !== 19)
     const sanitized = sanitizeDataset(dataset)
     for (const run of sanitized) {
-      const hasAnomaly = Array.from(run.anomaly).some((v) => v === 1)
+      const hasAnomaly = Array.from(run.anomaly).some((v) => v !== 0)
       expect(hasAnomaly).toBe(true)
     }
   })
 
-  it('Z_THRESHOLD and MAD_THRESHOLD are exported and equal 3.5', () => {
-    expect(Z_THRESHOLD).toBe(3.5)
-    expect(MAD_THRESHOLD).toBe(3.5)
+  it('OUTLIER_THRESHOLD and PLATEAU_MIN_RUN are exported', () => {
+    expect(OUTLIER_THRESHOLD).toBe(3.5)
+    expect(PLATEAU_MIN_RUN).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Truthfulness against the generator's ground truth
+// ---------------------------------------------------------------------------
+
+/** Strip the generator's `corrupt` label so the sanitizer cannot see it. */
+function unlabelled(run) {
+  return { ...run, steps: run.steps.map(({ corrupt, ...s }) => s) }
+}
+
+describe('sanitizeRun — truthfulness', () => {
+  const runs = generateDataset().filter((r) => r.id !== LARGE_RUN_ID)
+
+  it('output does not depend on the generator corrupt label', () => {
+    for (const run of runs.slice(0, 5)) {
+      const a = sanitizeRun(run)
+      const b = sanitizeRun(unlabelled(run))
+      expect(Array.from(b.anomaly)).toEqual(Array.from(a.anomaly))
+    }
+  })
+
+  it('every injected event in the manifest is flagged', () => {
+    for (const run of runs) {
+      const result = sanitizeRun(unlabelled(run))
+      const index = new Map(Array.from(result.steps, (s, i) => [s, i]))
+      for (const { kind, pos } of run.manifest) {
+        if (kind === 'unsorted') continue // valid values; resolved by the sort
+        const i = index.get(pos) + (kind === 'gap' ? 1 : 0)
+        expect(result.anomaly[i], `run ${run.id} ${kind}@${pos}`).not.toBe(0)
+      }
+    }
+  })
+
+  it('no clean (un-injected) step is flagged', () => {
+    for (const run of runs) {
+      const corrupt = new Set(run.steps.filter((s) => s.corrupt).map((s) => s.step))
+      const result = sanitizeRun(unlabelled(run))
+      for (let i = 0; i < result.length; i++) {
+        if (!corrupt.has(result.steps[i])) {
+          expect(result.anomaly[i], `run ${run.id} step ${result.steps[i]}`).toBe(0)
+        }
+      }
+    }
+  })
+
+  it('flags the documented spike in the 1M-point run quickly and without noise', () => {
+    const run = generateRun(LARGE_RUN_ID, { steps: LARGE_RUN_STEPS })
+    const t0 = performance.now()
+    const result = sanitizeRun(run)
+    const elapsed = performance.now() - t0
+    const i = Array.from(result.steps).indexOf(LARGE_RUN_SPIKE_STEP)
+    expect(has(result.anomaly[i], ANOMALY.OUTLIER)).toBe(true)
+    let flagged = 0
+    for (const v of result.anomaly) if (v !== 0) flagged++
+    expect(flagged).toBeLessThan(50)
+    expect(elapsed).toBeLessThan(3000)
   })
 })
 
@@ -358,27 +480,28 @@ describe('sanitizeRun — determinism', () => {
 // ---------------------------------------------------------------------------
 
 describe('sanitizeRun — shuffle-equivalence', () => {
-  it('shuffled + duplicate input produces same step indices as sorted input after sanitization', () => {
-    // 1. Create a clean sorted run of 30 steps.
-    const baseSteps = Array.from({ length: 30 }, (_, i) =>
-      makeStep(i, 1.0 - i * 0.02),
+  it('shuffled + duplicated input produces output identical to clean sorted input', () => {
+    // Clean sorted input (with a NaN and a spike so every column is exercised).
+    const clean = Array.from({ length: 60 }, (_, i) =>
+      makeStep(i, wobble(i, 2 - i * 0.02), 1e-3 * (1 - i / 100), 0.5 + i * 0.001),
     )
+    clean[10] = makeStep(10, NaN, NaN, NaN)
+    clean[40] = makeStep(40, 9.0)
 
-    // 2. Add manual duplicates at step 5 and step 15.
-    const withDups = [
-      ...baseSteps,
-      makeStep(5, 1.5, 1e-3, 0.5, true),   // duplicate at 5
-      makeStep(15, 0.8, 1e-3, 0.5, false),  // duplicate at 15
-    ]
-
-    // 3. Shuffled version using a deterministic shuffle.
+    // Duplicate some entries (re-sent copies) and shuffle the arrival order.
+    const withDups = [...clean, clean[5], clean[10], clean[33], clean[33]]
     const shuffled = deterministicShuffle(withDups, 0xabcdef01)
 
-    // 4. Sanitize both.
-    const sortedResult = sanitizeRun(makeRun(0, withDups))
-    const shuffledResult = sanitizeRun(makeRun(0, shuffled))
+    const expected = sanitizeRun(makeRun(0, clean))
+    const actual = sanitizeRun(makeRun(0, shuffled))
 
-    // 5. The step index buffers must be identical.
-    expect(Array.from(sortedResult.steps)).toEqual(Array.from(shuffledResult.steps))
+    for (const col of ['steps', 'loss', 'lr', 'grad_norm']) {
+      expect(Array.from(actual[col]), col).toEqual(Array.from(expected[col]))
+    }
+    // Anomaly flags are identical apart from the collision bit on re-sent steps.
+    const withoutCollision = Array.from(actual.anomaly, (v) => v & ~ANOMALY.COLLISION)
+    expect(withoutCollision).toEqual(Array.from(expected.anomaly))
+    expect(actual.collisions).toBe(4)
+    expect(expected.collisions).toBe(0)
   })
 })

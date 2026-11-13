@@ -15,6 +15,11 @@
  *   - duplicate : a step index is emitted twice (out-of-order ingestion sim.)
  *   - infinity  : loss set to +Infinity or -Infinity for one step
  *   - gap       : skip 2–5 consecutive step indices (gap in sequence)
+ *   - unsorted  : a block of 3–6 consecutive entries arrives in reverse order
+ *                 (values stay valid; only arrival order is wrong)
+ *
+ * Every run's first event kind is KINDS[runId % KINDS.length], so the
+ * standard 20-run dataset is guaranteed to contain every corruption kind.
  *
  * Design constraints
  *   - No external dependencies; uses only the project's own mulberry32 PRNG.
@@ -57,6 +62,9 @@ export const LARGE_RUN_STEPS = 1_000_000
  * Exported so tests and downstream consumers can reference the documented position.
  */
 export const LARGE_RUN_SPIKE_STEP = 500_000
+
+/** Corruption kinds, in the order used for the per-run guaranteed first event. */
+export const KINDS = Object.freeze(['spike', 'dropout', 'plateau', 'duplicate', 'infinity', 'gap', 'unsorted'])
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -126,10 +134,10 @@ function generateCleanSteps(rng, steps) {
  *
  * @param {{ next: () => number, nextInt: (lo: number, hi: number) => number }} rng
  * @param {Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>} steps
+ * @param {string} firstKind - kind used for the first event (guarantees coverage)
  * @returns {{ steps: Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>, manifest: Array<{ kind: string, pos: number }> }}
  */
-function injectCorruption(rng, steps) {
-  const KINDS = ['spike', 'dropout', 'plateau', 'duplicate', 'infinity', 'gap']
+function injectCorruption(rng, steps, firstKind) {
   const count = rng.nextInt(2, 5)
 
   // Work on a shallow copy so the original is unchanged.
@@ -141,8 +149,14 @@ function injectCorruption(rng, steps) {
   /** @type {Array<{ kind: string, pos: number }>} */
   const manifest = []
 
+  // Reorderings are applied after all other events so that index-based
+  // mutations (duplicate splice, gap renumbering) operate on ordered data.
+  /** @type {Array<{ step: number, length: number }>} */
+  const pendingReorders = []
+
   for (let i = 0; i < count; i++) {
-    const kind = KINDS[rng.nextInt(0, KINDS.length - 1)]
+    const drawn = KINDS[rng.nextInt(0, KINDS.length - 1)]
+    const kind = i === 0 ? firstKind : drawn
 
     // Pick a position away from the very first and last 5 steps so the
     // corruption is never clipped by boundary conditions.
@@ -151,7 +165,7 @@ function injectCorruption(rng, steps) {
     do {
       pos = rng.nextInt(5, out.length - 6)
       attempts++
-    } while (usedPositions.has(pos) && attempts < 20)
+    } while ((usedPositions.has(pos) || out[pos].corrupt) && attempts < 20)
     usedPositions.add(pos)
 
     // Record the step index (not the array index) for the manifest.
@@ -182,7 +196,9 @@ function injectCorruption(rng, steps) {
         const length = rng.nextInt(3, 8)
         const frozenLoss = out[pos].loss
         const frozenGradNorm = out[pos].grad_norm
+        // Stop early rather than overwrite an earlier event.
         for (let j = pos; j < Math.min(pos + length, out.length); j++) {
+          if (j > pos && out[j].corrupt) break
           out[j] = { ...out[j], loss: frozenLoss, grad_norm: frozenGradNorm, corrupt: true }
           usedPositions.add(j)
         }
@@ -217,6 +233,9 @@ function injectCorruption(rng, steps) {
         for (let j = pos + 1; j < out.length; j++) {
           out[j] = { ...out[j], step: out[j].step + gapSize }
         }
+        // Keep earlier manifest entries pointing at the (renumbered) steps.
+        for (const m of manifest) if (m.pos > stepIndexAtPos) m.pos += gapSize
+        for (const r of pendingReorders) if (r.step > stepIndexAtPos) r.step += gapSize
         // Mark surrounding steps as corrupt to signal context.
         out[pos] = { ...out[pos], corrupt: true }
         if (pos + 1 < out.length) {
@@ -225,7 +244,21 @@ function injectCorruption(rng, steps) {
         manifest.push({ kind, pos: stepIndexAtPos })
         break
       }
+
+      case 'unsorted': {
+        // Defer: reverse a block of 3–6 entries starting at this step.
+        pendingReorders.push({ step: stepIndexAtPos, length: rng.nextInt(3, 6) })
+        manifest.push({ kind, pos: stepIndexAtPos })
+        break
+      }
     }
+  }
+
+  for (const { step, length } of pendingReorders) {
+    const start = out.findIndex((s) => s.step === step)
+    const end = Math.min(start + length, out.length)
+    const block = out.slice(start, end).reverse()
+    out.splice(start, block.length, ...block)
   }
 
   return { steps: out, manifest }
@@ -254,7 +287,7 @@ export function generateRun(runId, { rootSeed = DEFAULT_ROOT_SEED, steps = STEPS
   const rng = mulberry32(seed)
 
   const clean = generateCleanSteps(rng, steps)
-  const { steps: corrupted, manifest } = injectCorruption(rng, clean)
+  const { steps: corrupted, manifest } = injectCorruption(rng, clean, KINDS[runId % KINDS.length])
 
   // For the large run (id 19), inject the documented spike at LARGE_RUN_SPIKE_STEP
   // only when this run is generated with LARGE_RUN_STEPS steps.
