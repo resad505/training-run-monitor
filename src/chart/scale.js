@@ -12,41 +12,9 @@
  *   4. Tick labels round-trip back to the tick value via Number(label).
  */
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import { formatTickNumber } from '../formatters.js'
 
-/**
- * Format a number nicely so that Number(str) === num (round-trip guarantee).
- * Strips floating-point noise (e.g. 0.30000000000000004 -> 0.3).
- *
- * @param {number} num
- * @returns {string}
- */
-export function formatTickNumber(num) {
-  if (!Number.isFinite(num)) return ''
-  if (num === 0) return '0'
-
-  const abs = Math.abs(num)
-
-  // For very small or very large numbers, use standard scientific notation
-  if (abs >= 1e9 || (abs < 1e-4 && abs > 0)) {
-    // Shortest exponent form that still round-trips exactly.
-    for (let digits = 0; digits <= 16; digits++) {
-      const str = num.toExponential(digits)
-      if (Number(str) === num) return str
-    }
-    return String(num)
-  }
-
-  // Round to at most 10 decimal digits to remove binary float representation artifacts
-  const rounded = Number(num.toPrecision(10))
-  const str = String(rounded)
-  if (Number(str) === num) return str
-
-  // Fallback to max precision that matches
-  return String(num)
-}
+export { formatTickNumber } from '../formatters.js'
 
 /**
  * Calculate a "nice" step size for linear ticks.
