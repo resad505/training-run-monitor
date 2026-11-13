@@ -329,3 +329,64 @@ describe('renderChart — user-selectable scale and smoothing', () => {
     expect(raw(0)).toEqual(Array.from(values))
   })
 })
+
+describe('renderChart — decimation is reused only when its inputs are unchanged', () => {
+  const make = (n = 5000) => ({
+    steps: Float64Array.from({ length: n }, (_, i) => i),
+    values: Float64Array.from({ length: n }, (_, i) => Math.sin(i / 40) + (i === 2500 ? 50 : 0)),
+    anomaly: new Uint8Array(n),
+  })
+  const draw = (series, options) => renderChart(createMockContext(), series, { width: 400, height: 300, ...options })
+
+  it('reuses the result for a crosshair-only, scale-only or smoothing-only redraw', () => {
+    const series = make()
+    const first = draw(series, { xRange: [0, 4999] }).decimated
+
+    expect(draw(series, { xRange: [0, 4999] }).decimated).toBe(first)
+    expect(draw(series, { xRange: [0, 4999], smoothing: 0 }).decimated).toBe(first)
+    expect(draw(series, { xRange: [0, 4999], smoothing: 0.5, scaleType: 'log' }).decimated).toBe(first)
+  })
+
+  it('recomputes when the window or the width changes', () => {
+    const series = make()
+    const first = draw(series, { xRange: [0, 4999] }).decimated
+
+    const zoomed = draw(series, { xRange: [2000, 3000] }).decimated
+    expect(zoomed).not.toBe(first)
+    expect(zoomed.steps[0]).toBeGreaterThanOrEqual(1999)
+
+    const wider = draw(series, { xRange: [2000, 3000], width: 800 }).decimated
+    expect(wider).not.toBe(zoomed)
+  })
+
+  it('a reused result is identical to a fresh decimation, spike included', () => {
+    const series = make()
+    draw(series, { xRange: [0, 4999] })
+    const reused = draw(series, { xRange: [0, 4999] }).decimated
+    const fresh = draw(make(), { xRange: [0, 4999] }).decimated
+
+    expect(Array.from(reused.steps)).toEqual(Array.from(fresh.steps))
+    expect(Array.from(reused.values)).toEqual(Array.from(fresh.values))
+    expect(Array.from(reused.values)).toContain(series.values[2500])
+  })
+
+  it('never serves one series the decimation of another', () => {
+    const a = make()
+    const b = make()
+    b.values[100] = -99
+    draw(a, { xRange: [0, 4999] })
+
+    expect(Array.from(draw(b, { xRange: [0, 4999] }).decimated.values)).toContain(-99)
+    expect(Array.from(draw(a, { xRange: [0, 4999] }).decimated.values)).not.toContain(-99)
+  })
+
+  it('does not reuse a result when only the anomaly flags differ', () => {
+    const series = make()
+    const first = draw(series, { xRange: [0, 4999] }).decimated
+    const flagged = { ...series, anomaly: Uint8Array.from(series.anomaly, (_, i) => (i === 1234 ? 2 : 0)) }
+    const second = draw(flagged, { xRange: [0, 4999] }).decimated
+
+    expect(second).not.toBe(first)
+    expect(Array.from(second.steps)).toContain(1234)
+  })
+})

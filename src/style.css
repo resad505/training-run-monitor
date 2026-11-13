@@ -41,6 +41,7 @@ h3 { color: #172033; font-size: 1rem; margin: 0; }
 .anomaly-badge { background: #fff1f2; color: #be123c; font-size: 0.68rem; padding: 4px 7px; }
 .anomaly-badge.clean { background: #ecfdf5; color: #047857; }
 .empty-state { color: #53617a; font-size: 0.85rem; padding: 20px 4px; text-align: center; }
+.pending-note { border-top: 1px solid #dce3ee; color: #53617a; font-size: 0.78rem; margin-top: 10px; padding-top: 10px; }
 .detail-panel { min-width: 0; }
 .detail-heading { margin: 4px 0 18px; }
 .update-status { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412; display: inline-block; font-size: 0.78rem; font-weight: 700; margin-top: 10px; padding: 6px 9px; }

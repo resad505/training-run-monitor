@@ -100,6 +100,9 @@ function connect(wsUrl) {
             listeners.set(method, [...(listeners.get(method) || []), listener])
           })
         },
+        on(method, listener) {
+          listeners.set(method, [...(listeners.get(method) || []), listener])
+        },
         close: () => socket.close(),
       })
   })
@@ -194,6 +197,17 @@ async function main() {
   }
 
   try {
+    // Count dedicated workers, to verify the dataset worker is really gone
+    // (and its heap released) once the dataset has been delivered.
+    let workersAlive = 0
+    cdp.on('Target.attachedToTarget', ({ targetInfo }) => {
+      if (targetInfo.type === 'worker') workersAlive++
+    })
+    cdp.on('Target.detachedFromTarget', () => {
+      workersAlive = Math.max(0, workersAlive - 1)
+    })
+    await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
+
     await cdp.send('Page.enable')
     await cdp.send('Runtime.enable')
     await cdp.send('Performance.enable')
@@ -317,12 +331,21 @@ async function main() {
     // --- Memory with the 1M run on screen -----------------------------------
     const heapBeforeGc = await heap()
     await cdp.send('HeapProfiler.collectGarbage')
-    await sleep(500)
+    await sleep(Number(args.settle || 500))
+    const rendererAfterGcMb = rendererMemory(browser.profile)
+    const jsHeapAfterGcMb = await heap()
+    // Memory a terminated worker freed can stay pooled in the process. A
+    // simulated memory-pressure signal shows how much of the figure above is
+    // reclaimable rather than in use.
+    await cdp.send('Memory.simulatePressureNotification', { level: 'critical' }).catch(() => {})
+    await sleep(1500)
     const memory = {
+      workersAliveAtEnd: workersAlive,
+      rendererAfterMemoryPressureMb: rendererMemory(browser.profile),
       rendererAfterStartupMb,
       jsHeapAfterStartupMb,
-      rendererWith1MRunAfterGcMb: rendererMemory(browser.profile),
-      jsHeapWith1MRunAfterGcMb: await heap(),
+      rendererWith1MRunAfterGcMb: rendererAfterGcMb,
+      jsHeapWith1MRunAfterGcMb: jsHeapAfterGcMb,
       jsHeapWith1MRunBeforeGcMb: heapBeforeGc,
     }
 

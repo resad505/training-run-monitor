@@ -6,8 +6,7 @@ import {
   renderCrosshairOverlay,
   setupCanvas,
 } from './chart/index.js'
-import { generateDataset } from './pipeline/generator.js'
-import { sanitizeDataset } from './pipeline/sanitizer.js'
+import { loadDataset } from './dataset-loader.js'
 import {
   ANOMALY_KINDS,
   anomalyCount,
@@ -81,6 +80,7 @@ app.innerHTML = `
             </div>
             <div id="run-list" class="run-list" role="listbox" aria-label="Training runs"></div>
             <div id="run-empty" class="empty-state" hidden>No runs match this filter.</div>
+            <div id="run-pending" class="pending-note" hidden></div>
           </aside>
           <section class="detail-panel">
             <div id="detail-empty" class="state-card" hidden>
@@ -133,6 +133,9 @@ const filter = document.querySelector('#run-filter')
 const sortSelect = document.querySelector('#run-sort')
 const directionButton = document.querySelector('#sort-direction')
 const runCount = document.querySelector('#run-count')
+const pending = document.querySelector('#run-pending')
+let totalRuns = 0
+let datasetLoad = null
 const metricCards = document.querySelector('#metric-cards')
 const chartPanels = document.querySelector('#chart-panels')
 const updateStatus = document.querySelector('#run-update-status')
@@ -286,11 +289,22 @@ function renderCharts(run) {
       renderCrosshairOverlay(ctx, interactions.find((item) => item.canvas === canvas)?.getCrosshair(), scales.xScale, scales.yScale, scales.margins, scales.plotW, scales.plotH)
     })
     redraw()
+    // Pointer and wheel events are coalesced to one redraw per frame.
+    let redrawQueued = false
+    const scheduleRender = () => {
+      if (redrawQueued) return
+      redrawQueued = true
+      requestAnimationFrame(() => {
+        redrawQueued = false
+        if (canvas.isConnected) redraw()
+      })
+    }
     const control = attachInteractions(canvas, {
       rawSeries: series,
       viewState,
       getScales: () => scales || {},
       onRender: redraw,
+      scheduleRender,
       a11yTarget,
       accessibleName: `${metric} chart for run ${formatInteger(run.id)}`,
     })
@@ -328,26 +342,65 @@ function showError(exception) {
   status.textContent = 'Load failed'
 }
 
+/** Runs still expected from the worker; shown so a short list is not mistaken for the whole dataset. */
+function renderPending() {
+  const remaining = Math.max(0, totalRuns - sanitizedRuns.length)
+  pending.hidden = remaining === 0
+  pending.textContent =
+    remaining === 0
+      ? ''
+      : `${formatInteger(remaining)} more ${remaining === 1 ? 'run is' : 'runs are'} still loading…`
+  status.textContent =
+    remaining === 0
+      ? `${formatInteger(sanitizedRuns.length)} runs ready · loaded ${formatUtcTime(new Date())}`
+      : `${formatInteger(sanitizedRuns.length)} of ${formatInteger(totalRuns)} runs ready · loading…`
+}
+
 function loadDashboard() {
+  datasetLoad?.cancel()
+  selectionController.cancel()
+  sanitizedRuns = []
+  totalRuns = 0
+  selectedRun = null
+  displayedRun = null
   loading.hidden = false
   error.hidden = true
   content.hidden = true
   status.textContent = 'Loading runs…'
-  // rAF callbacks run before the frame is painted, so the heavy synchronous
-  // generation waits one more task to let the loading state reach the screen.
-  const start = () => {
-    try {
-      sanitizedRuns = perf.timed('dataset-build', () => sanitizeDataset(generateDataset()))
-      loading.hidden = true
-      content.hidden = false
-      status.textContent = `${formatInteger(sanitizedRuns.length)} runs ready · loaded ${formatUtcTime(new Date())}`
-      renderList()
-      selectionController.select(sanitizedRuns[0].id)
-    } catch (exception) {
-      showError(exception)
-    }
+
+  // The dataset is built in a worker and arrives run by run, smallest first,
+  // so the page stays responsive and the first chart does not wait for the
+  // 1M-step run.
+  let worker
+  try {
+    worker = new Worker(new URL('./pipeline/dataset.worker.js', import.meta.url), { type: 'module' })
+  } catch (exception) {
+    showError(exception)
+    return
   }
-  requestAnimationFrame(() => setTimeout(start, 0))
+
+  datasetLoad = loadDataset(worker, {
+    onStart: (total) => {
+      totalRuns = total
+    },
+    onRun: (run) => {
+      sanitizedRuns.push(run)
+      renderPending()
+      renderList()
+      if (sanitizedRuns.length === 1) {
+        loading.hidden = true
+        content.hidden = false
+        selectionController.select(run.id)
+      }
+    },
+    onDone: () => {
+      datasetLoad = null
+      totalRuns = sanitizedRuns.length
+      renderPending()
+      perf.milestone('all-runs-ready')
+    },
+    onError: showError,
+  })
 }
 
 list.addEventListener('click', (event) => {

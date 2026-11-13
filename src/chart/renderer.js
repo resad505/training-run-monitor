@@ -124,6 +124,44 @@ function rawEMA(series, weight) {
   return cached.ema
 }
 
+/** Last decimation per values buffer: `{ steps, anomaly, plotW, x0, x1, result }`. */
+const decimationCache = new WeakMap()
+
+/**
+ * Decimate the visible window, reusing the previous result when nothing that
+ * affects it has changed. A redraw caused only by the crosshair, the y-scale
+ * or the smoothing weight then skips the scan of the window entirely.
+ *
+ * The key is every input of `downsample`: the three buffers (by identity),
+ * the plot width and the exact x-range. Series buffers are treated as
+ * immutable — they are never written to after the sanitizer creates them.
+ */
+function decimate(series, plotW, xRange) {
+  const x0 = xRange ? xRange[0] : null
+  const x1 = xRange ? xRange[1] : null
+  const cached = decimationCache.get(series.values)
+  if (
+    cached &&
+    cached.steps === series.steps &&
+    cached.anomaly === series.anomaly &&
+    cached.plotW === plotW &&
+    cached.x0 === x0 &&
+    cached.x1 === x1
+  ) {
+    return cached.result
+  }
+
+  const result = downsample({
+    steps: series.steps,
+    values: series.values,
+    anomaly: series.anomaly,
+    targetWidth: plotW,
+    xRange,
+  })
+  decimationCache.set(series.values, { steps: series.steps, anomaly: series.anomaly, plotW, x0, x1, result })
+  return result
+}
+
 /**
  * Render a complete training-run chart to a Canvas 2D context.
  *
@@ -144,13 +182,7 @@ export function renderChart(ctx, series, options = {}) {
   const plotH = Math.max(10, height - margins.top - margins.bottom)
 
   // 1. Downsample for plotting area
-  const decimated = downsample({
-    steps: series.steps,
-    values: series.values,
-    anomaly: series.anomaly,
-    targetWidth: plotW,
-    xRange,
-  })
+  const decimated = decimate(series, plotW, xRange)
 
   // Clear canvas
   ctx.clearRect(0, 0, width, height)

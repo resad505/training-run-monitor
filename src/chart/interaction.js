@@ -268,6 +268,11 @@ export function describePoint(info) {
  */
 export function attachInteractions(canvas, options) {
   const { rawSeries, viewState, getScales, onRender, a11yTarget, accessibleName = 'Training run metric chart' } = options
+  // Pointer and wheel events can arrive many times per frame. They only need
+  // the chart redrawn "soon", so the host may coalesce them (for example one
+  // redraw per animation frame). Keyboard paths keep the synchronous
+  // `onRender`, because they read the new scales straight afterwards.
+  const scheduleRender = options.scheduleRender || onRender
 
   // Accessible name + keyboard focus. role="application" lets screen readers
   // pass arrow keys through to the chart instead of using them to browse.
@@ -356,12 +361,18 @@ export function attachInteractions(canvas, options) {
     const { xScale } = getScales()
     if (!xScale) return
 
-    const centerStep = xScale.invert(mousePx)
-    if (centerStep === null) return
+    // Anchor on the view state, not on the last drawn scale: with coalesced
+    // redraws the scale can be one or more wheel events behind, and using it
+    // would make the point under the cursor drift while zooming.
+    const [p0, p1] = xScale.range
+    const [r0, r1] = viewState.getRange()
+    if (p1 === p0) return
+    const centerStep = r0 + ((mousePx - p0) / (p1 - p0)) * (r1 - r0)
+    if (!Number.isFinite(centerStep)) return
 
     const factor = e.deltaY < 0 ? 0.8 : 1.25
     viewState.zoomAt(centerStep, factor)
-    onRender()
+    scheduleRender()
   }
 
   // 2. Drag Pan
@@ -381,12 +392,16 @@ export function attachInteractions(canvas, options) {
     const { xScale } = getScales()
 
     if (isDragging && dragStartRange && xScale) {
+      // `pan` moves the current range, so each move applies only the distance
+      // travelled since the previous one. Applying the whole distance since
+      // pointerdown every time would compound and outrun the pointer.
       const deltaPx = e.clientX - dragStartX
+      dragStartX = e.clientX
       const span = dragStartRange[1] - dragStartRange[0]
       const plotW = xScale.range ? Math.abs(xScale.range[1] - xScale.range[0]) : 800
       const deltaSteps = -(deltaPx * (span / plotW))
       viewState.pan(deltaSteps)
-      onRender()
+      scheduleRender()
       return
     }
 
@@ -394,7 +409,7 @@ export function attachInteractions(canvas, options) {
     if (xScale) {
       activeCrosshair = inspectRawPoint(mousePx, xScale, rawSeries)
       updateA11yText(activeCrosshair)
-      onRender()
+      scheduleRender()
     }
   }
 
@@ -411,7 +426,7 @@ export function attachInteractions(canvas, options) {
     if (!isDragging) {
       activeCrosshair = null
       updateA11yText(null)
-      onRender()
+      scheduleRender()
     }
   }
 
