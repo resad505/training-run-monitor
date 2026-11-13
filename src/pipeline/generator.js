@@ -6,13 +6,15 @@
  * root seed without shared PRNG state between runs.
  *
  * Each run is an array of step objects:
- *   { step: number, loss: number, accuracy: number, corrupt: boolean }
+ *   { step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }
  *
  * Corruption kinds injected deterministically:
- *   - spike   : loss jumps to an extreme value for one step
- *   - dropout : loss set to NaN (missing / dropped measurement)
- *   - plateau : loss freezes at the same value for several consecutive steps
+ *   - spike     : loss jumps to an extreme value for one step
+ *   - dropout   : loss set to NaN (missing / dropped measurement)
+ *   - plateau   : loss freezes at the same value for several consecutive steps
  *   - duplicate : a step index is emitted twice (out-of-order ingestion sim.)
+ *   - infinity  : loss set to +Infinity or -Infinity for one step
+ *   - gap       : skip 2–5 consecutive step indices (gap in sequence)
  *
  * Design constraints
  *   - No external dependencies; uses only the project's own mulberry32 PRNG.
@@ -30,7 +32,7 @@ import { mulberry32 } from './prng.js'
 /** Number of training runs produced by generateDataset(). */
 export const RUN_COUNT = 20
 
-/** Steps per run before corruption expansion. */
+/** Steps per run before corruption expansion (used for runs 0–18). */
 export const STEPS_PER_RUN = 200
 
 /**
@@ -38,6 +40,23 @@ export const STEPS_PER_RUN = 200
  * Override via the `rootSeed` option to reproduce a different dataset family.
  */
 export const DEFAULT_ROOT_SEED = 0xdeadbeef
+
+/**
+ * Run id for the large 1M-step run.
+ * Run 19 is generated with LARGE_RUN_STEPS steps instead of STEPS_PER_RUN.
+ */
+export const LARGE_RUN_ID = 19
+
+/**
+ * Number of steps for the large run (run id 19).
+ */
+export const LARGE_RUN_STEPS = 1_000_000
+
+/**
+ * Fixed step index where a "1M spike" is injected in the large run.
+ * Exported so tests and downstream consumers can reference the documented position.
+ */
+export const LARGE_RUN_SPIKE_STEP = 500_000
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -59,29 +78,42 @@ function deriveRunSeed(rootSeed, runId) {
 }
 
 /**
- * Generate the "clean" exponentially-decaying loss + mirrored accuracy curve
+ * Generate the "clean" exponentially-decaying loss curve with lr and grad_norm
  * for a single run.
  *
  * Loss follows:  L(t) = base + (peak − base) · exp(−t / τ) + noise
- * Accuracy:      A(t) = 1 − L(t) / peak  (clamped to [0, 1])
+ * LR:            cosine decay from lrPeak to lrMin over `steps`
+ * grad_norm:     correlated with loss but slightly noisier
  *
  * @param {{ next: () => number }} rng
  * @param {number} steps
- * @returns {Array<{ step: number, loss: number, accuracy: number, corrupt: boolean }>}
+ * @returns {Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>}
  */
 function generateCleanSteps(rng, steps) {
-  const peak = 2.5 + rng.next() * 1.5   // loss at step 0: [2.5, 4.0]
-  const base = 0.05 + rng.next() * 0.15  // asymptotic floor: [0.05, 0.20]
-  const tau = 30 + rng.next() * 70       // time constant in steps: [30, 100]
-  const noiseScale = 0.02 + rng.next() * 0.08  // per-step noise amplitude
+  const peak = 2.5 + rng.next() * 1.5         // loss at step 0: [2.5, 4.0]
+  const base = 0.05 + rng.next() * 0.15       // asymptotic floor: [0.05, 0.20]
+  const tau = 30 + rng.next() * 70            // time constant in steps: [30, 100]
+  const noiseScale = 0.02 + rng.next() * 0.08 // per-step noise amplitude
+
+  // LR schedule parameters (cosine decay)
+  const lrPeak = 1e-3 + rng.next() * 9e-3     // initial lr: [1e-3, 1e-2]
+  const lrMin = 1e-5 + rng.next() * 9e-5      // final lr: [1e-5, 1e-4]
 
   const result = []
   for (let t = 0; t < steps; t++) {
     const trend = base + (peak - base) * Math.exp(-t / tau)
     const noise = (rng.next() - 0.5) * 2 * noiseScale
     const loss = Math.max(0, trend + noise)
-    const accuracy = Math.min(1, Math.max(0, 1 - loss / peak))
-    result.push({ step: t, loss, accuracy, corrupt: false })
+
+    // Cosine-decay LR (always positive and finite)
+    const cosinePhase = (Math.PI * t) / Math.max(1, steps - 1)
+    const lr = lrMin + 0.5 * (lrPeak - lrMin) * (1 + Math.cos(cosinePhase))
+
+    // grad_norm correlated with loss, plus extra noise
+    const gradNoise = (rng.next() - 0.5) * 2 * noiseScale * 2
+    const grad_norm = Math.max(0, loss * (0.8 + rng.next() * 0.4) + gradNoise)
+
+    result.push({ step: t, loss, lr, grad_norm, corrupt: false })
   }
   return result
 }
@@ -93,12 +125,11 @@ function generateCleanSteps(rng, steps) {
  * Corruption budget: 2–5 events per run, positions chosen deterministically.
  *
  * @param {{ next: () => number, nextInt: (lo: number, hi: number) => number }} rng
- * @param {Array<{ step: number, loss: number, accuracy: number, corrupt: boolean }>} steps
- * @returns {Array<{ step: number, loss: number, accuracy: number, corrupt: boolean }>}
- *   A new array (may be longer than `steps` if duplicates are injected).
+ * @param {Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>} steps
+ * @returns {{ steps: Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>, manifest: Array<{ kind: string, pos: number }> }}
  */
 function injectCorruption(rng, steps) {
-  const KINDS = ['spike', 'dropout', 'plateau', 'duplicate']
+  const KINDS = ['spike', 'dropout', 'plateau', 'duplicate', 'infinity', 'gap']
   const count = rng.nextInt(2, 5)
 
   // Work on a shallow copy so the original is unchanged.
@@ -106,6 +137,9 @@ function injectCorruption(rng, steps) {
 
   // Keep track of used positions to avoid stacking two events on the same step.
   const usedPositions = new Set()
+
+  /** @type {Array<{ kind: string, pos: number }>} */
+  const manifest = []
 
   for (let i = 0; i < count; i++) {
     const kind = KINDS[rng.nextInt(0, KINDS.length - 1)]
@@ -120,6 +154,9 @@ function injectCorruption(rng, steps) {
     } while (usedPositions.has(pos) && attempts < 20)
     usedPositions.add(pos)
 
+    // Record the step index (not the array index) for the manifest.
+    const stepIndexAtPos = out[pos].step
+
     switch (kind) {
       case 'spike': {
         // Loss jumps to 3–8× its current value for exactly one step.
@@ -127,15 +164,16 @@ function injectCorruption(rng, steps) {
         out[pos] = {
           ...out[pos],
           loss: out[pos].loss * factor,
-          accuracy: Math.max(0, out[pos].accuracy * (1 / factor)),
           corrupt: true,
         }
+        manifest.push({ kind, pos: stepIndexAtPos })
         break
       }
 
       case 'dropout': {
         // Measurement missing — NaN signals "no data" to the sanitizer.
-        out[pos] = { ...out[pos], loss: NaN, accuracy: NaN, corrupt: true }
+        out[pos] = { ...out[pos], loss: NaN, lr: NaN, grad_norm: NaN, corrupt: true }
+        manifest.push({ kind, pos: stepIndexAtPos })
         break
       }
 
@@ -143,11 +181,12 @@ function injectCorruption(rng, steps) {
         // Loss freezes for 3–8 consecutive steps (simulate stuck optimizer).
         const length = rng.nextInt(3, 8)
         const frozenLoss = out[pos].loss
-        const frozenAcc = out[pos].accuracy
+        const frozenGradNorm = out[pos].grad_norm
         for (let j = pos; j < Math.min(pos + length, out.length); j++) {
-          out[j] = { ...out[j], loss: frozenLoss, accuracy: frozenAcc, corrupt: true }
+          out[j] = { ...out[j], loss: frozenLoss, grad_norm: frozenGradNorm, corrupt: true }
           usedPositions.add(j)
         }
+        manifest.push({ kind, pos: stepIndexAtPos })
         break
       }
 
@@ -155,12 +194,41 @@ function injectCorruption(rng, steps) {
         // Insert a copy of this step immediately after it (same step index).
         const dup = { ...out[pos], corrupt: true }
         out.splice(pos + 1, 0, dup)
+        manifest.push({ kind, pos: stepIndexAtPos })
+        break
+      }
+
+      case 'infinity': {
+        // Set loss to +Infinity or -Infinity (alternating based on rng).
+        const sign = rng.next() < 0.5 ? 1 : -1
+        out[pos] = {
+          ...out[pos],
+          loss: sign * Infinity,
+          corrupt: true,
+        }
+        manifest.push({ kind, pos: stepIndexAtPos })
+        break
+      }
+
+      case 'gap': {
+        // Skip 2–5 consecutive step indices by renumbering subsequent steps.
+        const gapSize = rng.nextInt(2, 5)
+        // Renumber all steps after pos by adding gapSize to their step index.
+        for (let j = pos + 1; j < out.length; j++) {
+          out[j] = { ...out[j], step: out[j].step + gapSize }
+        }
+        // Mark surrounding steps as corrupt to signal context.
+        out[pos] = { ...out[pos], corrupt: true }
+        if (pos + 1 < out.length) {
+          out[pos + 1] = { ...out[pos + 1], corrupt: true }
+        }
+        manifest.push({ kind, pos: stepIndexAtPos })
         break
       }
     }
   }
 
-  return out
+  return { steps: out, manifest }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +245,8 @@ function injectCorruption(rng, steps) {
  * @returns {{
  *   id: number,
  *   seed: number,
- *   steps: Array<{ step: number, loss: number, accuracy: number, corrupt: boolean }>
+ *   steps: Array<{ step: number, loss: number, lr: number, grad_norm: number, corrupt: boolean }>,
+ *   manifest: Array<{ kind: string, pos: number }>
  * }}
  */
 export function generateRun(runId, { rootSeed = DEFAULT_ROOT_SEED, steps = STEPS_PER_RUN } = {}) {
@@ -185,22 +254,42 @@ export function generateRun(runId, { rootSeed = DEFAULT_ROOT_SEED, steps = STEPS
   const rng = mulberry32(seed)
 
   const clean = generateCleanSteps(rng, steps)
-  const corrupted = injectCorruption(rng, clean)
+  const { steps: corrupted, manifest } = injectCorruption(rng, clean)
 
-  return { id: runId, seed, steps: corrupted }
+  // For the large run (id 19), inject the documented spike at LARGE_RUN_SPIKE_STEP
+  // only when this run is generated with LARGE_RUN_STEPS steps.
+  if (runId === LARGE_RUN_ID && steps === LARGE_RUN_STEPS) {
+    const spikeIdx = corrupted.findIndex((s) => s.step === LARGE_RUN_SPIKE_STEP)
+    if (spikeIdx !== -1) {
+      corrupted[spikeIdx] = {
+        ...corrupted[spikeIdx],
+        loss: corrupted[spikeIdx].loss * 10,
+        corrupt: true,
+      }
+      manifest.push({ kind: 'spike', pos: LARGE_RUN_SPIKE_STEP })
+    }
+  }
+
+  return { id: runId, seed, steps: corrupted, manifest }
 }
 
 /**
  * Generate the full dataset of RUN_COUNT training runs.
+ *
+ * Runs 0–18 use STEPS_PER_RUN steps.
+ * Run 19 uses LARGE_RUN_STEPS (1,000,000) steps and includes the documented
+ * spike at LARGE_RUN_SPIKE_STEP.
  *
  * Each run uses an independent PRNG derived from `rootSeed` so runs can be
  * generated in any order and still produce identical results.
  *
  * @param {object} [opts]
  * @param {number} [opts.rootSeed=DEFAULT_ROOT_SEED]
- * @param {number} [opts.steps=STEPS_PER_RUN]
  * @returns {Array<ReturnType<typeof generateRun>>}
  */
-export function generateDataset({ rootSeed = DEFAULT_ROOT_SEED, steps = STEPS_PER_RUN } = {}) {
-  return Array.from({ length: RUN_COUNT }, (_, id) => generateRun(id, { rootSeed, steps }))
+export function generateDataset({ rootSeed = DEFAULT_ROOT_SEED } = {}) {
+  return Array.from({ length: RUN_COUNT }, (_, id) => {
+    const steps = id === LARGE_RUN_ID ? LARGE_RUN_STEPS : STEPS_PER_RUN
+    return generateRun(id, { rootSeed, steps })
+  })
 }
