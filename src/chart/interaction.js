@@ -15,7 +15,7 @@
  */
 
 import { binarySearchFirstGe, binarySearchLastLe } from './downsample.js'
-import { formatTickNumber } from '../formatters.js'
+import { formatInteger, formatTickNumber } from '../formatters.js'
 import { ANOMALY } from '../pipeline/sanitizer.js'
 
 const ANOMALY_NAMES = [
@@ -236,13 +236,13 @@ export function inspectRawPoint(mousePx, xScale, rawSeries) {
  * @returns {string}
  */
 export function describePoint(info) {
-  let text = `Step ${info.step}: value ${formatMetricValue(info.value)}`
+  let text = `Step ${formatInteger(info.step)}: value ${formatMetricValue(info.value)}`
   const kinds = describeAnomaly(info.anomaly)
   if (kinds) text += ` (anomaly: ${kinds})`
   if (info.pixel) {
     const { count, min, max, anomaly } = info.pixel
     const range = Number.isFinite(min) ? `${formatMetricValue(min)} to ${formatMetricValue(max)}` : 'no finite values'
-    text += `. This pixel covers ${count} points, range ${range}`
+    text += `. This pixel covers ${formatInteger(count)} points, range ${range}`
     const pixelKinds = describeAnomaly(anomaly & ~info.anomaly)
     if (pixelKinds) text += `, including ${pixelKinds}`
   }
@@ -296,7 +296,7 @@ export function attachInteractions(canvas, options) {
 
   function announceRange() {
     const [r0, r1] = viewState.getRange()
-    announce(`Showing steps ${Math.round(r0)} to ${Math.round(r1)}`)
+    announce(`Showing steps ${formatInteger(Math.round(r0))} to ${formatInteger(Math.round(r1))}`)
   }
 
   /** Move the crosshair to a raw index, panning so it stays in view. */
@@ -561,10 +561,10 @@ export function renderCrosshairOverlay(ctx, crosshair, xScale, yScale, margins, 
   }
 
   // Floating tooltip card
-  let label = `Step ${crosshair.step}: ${formatMetricValue(crosshair.value)}`
+  let label = `Step ${formatInteger(crosshair.step)}: ${formatMetricValue(crosshair.value)}`
   if (crosshair.pixel && Number.isFinite(crosshair.pixel.min)) {
     const { count, min, max } = crosshair.pixel
-    label += `  (${count} pts in px: ${formatMetricValue(min)} – ${formatMetricValue(max)})`
+    label += `  (${formatInteger(count)} pts in px: ${formatMetricValue(min)} – ${formatMetricValue(max)})`
   }
   const kinds = describeAnomaly(crosshair.anomaly)
   if (kinds) label += `  ⚠ ${kinds}`
@@ -574,7 +574,9 @@ export function renderCrosshairOverlay(ctx, crosshair, xScale, yScale, margins, 
   const boxH = 24
   let boxX = px + 10
   if (boxX + boxW > margins.left + plotW) {
-    boxX = px - boxW - 10
+    // Flip to the left of the cursor, but never past the plot's left edge:
+    // the label starts with the step and value, which must stay readable.
+    boxX = Math.max(margins.left, px - boxW - 10)
   }
   const boxY = margins.top + 10
 

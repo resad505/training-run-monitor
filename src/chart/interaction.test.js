@@ -7,6 +7,7 @@ import {
   attachInteractions,
   describeAnomaly,
   describePoint,
+  renderCrosshairOverlay,
 } from './interaction.js'
 import { ANOMALY } from '../pipeline/sanitizer.js'
 import { createLinearScale } from './scale.js'
@@ -300,5 +301,79 @@ describe('attachInteractions — Accessibility & Keyboard Controls', () => {
     const [panned0] = viewState.getRange()
     expect(panned0).toBeGreaterThan(initial0)
     expect(mockA11y.textContent).toMatch(/^Showing steps/)
+  })
+})
+
+describe('describePoint — deterministic number formatting', () => {
+  it('groups large step numbers and counts the en-US way', () => {
+    const text = describePoint({
+      step: 500000,
+      value: 1.5,
+      anomaly: 0,
+      rawIndex: 500000,
+      pixel: { count: 1250, min: 0.1, max: 1.5, anomaly: 0 },
+    })
+
+    expect(text).toBe('Step 500,000: value 1.5. This pixel covers 1,250 points, range 0.1 to 1.5')
+  })
+
+  it('names non-finite values instead of printing a number', () => {
+    expect(describePoint({ step: 3, value: NaN, anomaly: ANOMALY.NON_FINITE, pixel: null })).toContain('NaN')
+    expect(describePoint({ step: 3, value: -Infinity, anomaly: ANOMALY.NON_FINITE, pixel: null })).toContain(
+      '-Infinity',
+    )
+  })
+})
+
+describe('renderCrosshairOverlay — tooltip placement', () => {
+  function overlayAt(step) {
+    const texts = []
+    const boxes = []
+    const noop = () => {}
+    const ctx = {
+      save: noop,
+      restore: noop,
+      beginPath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      stroke: noop,
+      arc: noop,
+      fill: noop,
+      setLineDash: noop,
+      measureText: (text) => ({ width: text.length * 7 }),
+      fillRect: (x, y, w, h) => boxes.push({ x, y, w, h }),
+      fillText: (text, x) => texts.push({ text, x }),
+    }
+    const margins = { top: 20, right: 30, bottom: 40, left: 60 }
+    const xScale = createLinearScale({ domain: [0, 1000], range: [60, 460] })
+    const yScale = createLinearScale({ domain: [0, 2], range: [260, 20] })
+    const crosshair = {
+      step,
+      value: 0.14856305808077283,
+      anomaly: ANOMALY.OUTLIER,
+      pixel: { count: 2097, min: 0.12822708995802645, max: 1.6154250399654324, anomaly: 0 },
+    }
+    renderCrosshairOverlay(ctx, crosshair, xScale, yScale, margins, 400, 240)
+    return { box: boxes[0], label: texts[0], margins }
+  }
+
+  it('keeps a long label that flips left inside the plot, step first', () => {
+    const { box, label, margins } = overlayAt(900)
+
+    expect(box.x).toBeGreaterThanOrEqual(margins.left)
+    expect(label.x).toBeGreaterThanOrEqual(margins.left)
+    expect(label.text.startsWith('Step 900: 0.14856305808077283')).toBe(true)
+    expect(label.text).toContain('2,097 pts in px')
+    expect(label.text).toContain('outlier')
+  })
+
+  it('draws nothing without a crosshair', () => {
+    const calls = []
+    const ctx = new Proxy({}, { get: (_target, name) => () => calls.push(name) })
+    const scale = createLinearScale({ domain: [0, 1], range: [0, 1] })
+
+    renderCrosshairOverlay(ctx, null, scale, scale, { top: 0, left: 0 }, 1, 1)
+
+    expect(calls).toEqual([])
   })
 })

@@ -1,8 +1,22 @@
 import './style.css'
-import { attachInteractions, createViewState, renderChart, renderCrosshairOverlay } from './chart/index.js'
+import {
+  attachInteractions,
+  createViewState,
+  renderChart,
+  renderCrosshairOverlay,
+  setupCanvas,
+} from './chart/index.js'
 import { generateDataset } from './pipeline/generator.js'
 import { sanitizeDataset } from './pipeline/sanitizer.js'
-import { anomalyCount, filterAndSortRuns, METRICS, summarizeMetric } from './dashboard.js'
+import {
+  ANOMALY_KINDS,
+  anomalyCount,
+  countAnomaliesByKind,
+  filterAndSortRuns,
+  METRICS,
+  nextOptionIndex,
+  summarizeMetric,
+} from './dashboard.js'
 import { createRunSelectionController } from './run-loader.js'
 import { formatInteger, formatNumber, formatUtcTime } from './formatters.js'
 
@@ -11,6 +25,7 @@ let interactions = []
 let selectedRun = null
 let displayedRun = null
 let sanitizedRuns = []
+let activeOptionId = null
 let sort = 'id'
 let direction = 'asc'
 
@@ -73,8 +88,11 @@ app.innerHTML = `
                 <div id="run-announcement" class="sr-only" aria-live="polite"></div>
                 <div id="run-update-status" class="update-status" role="status" hidden>Updating selected run…</div>
               </div>
-              <div id="metric-cards" class="metric-cards"></div>
-              <div id="chart-panels" class="chart-panels"></div>
+              <ul id="anomaly-summary" class="anomaly-summary" aria-label="Flagged points by kind"></ul>
+              <div id="run-body">
+                <div id="metric-cards" class="metric-cards"></div>
+                <div id="chart-panels" class="chart-panels"></div>
+              </div>
             </div>
           </section>
         </div>
@@ -96,6 +114,16 @@ const runCount = document.querySelector('#run-count')
 const metricCards = document.querySelector('#metric-cards')
 const chartPanels = document.querySelector('#chart-panels')
 const updateStatus = document.querySelector('#run-update-status')
+const runBody = document.querySelector('#run-body')
+const anomalySummary = document.querySelector('#anomaly-summary')
+
+/** Mark the detail body as lagging behind (or caught up with) the selection. */
+function setStale(stale, message = '') {
+  runBody.classList.toggle('is-stale', stale)
+  runBody.setAttribute('aria-busy', String(stale))
+  updateStatus.hidden = !stale
+  updateStatus.textContent = message
+}
 
 const selectionController = createRunSelectionController(
   (id) => Promise.resolve(sanitizedRuns.find((run) => run.id === id)),
@@ -103,38 +131,53 @@ const selectionController = createRunSelectionController(
     onStart: (id) => {
       selectedRun = sanitizedRuns.find((run) => run.id === id) || null
       if (!selectedRun) return
-      updateStatus.hidden = false
-      updateStatus.textContent = `Updating Run ${id}…`
       document.querySelector('#detail-empty').hidden = true
       document.querySelector('#run-detail').hidden = false
-      document.querySelector('#selected-run-title').textContent = `Run ${id}`
-      document.querySelector('#selected-run-meta').textContent = 'Loading selected run…'
+      // The title, metrics and charts only ever change together in onSuccess,
+      // so one run's data can never sit under another run's title. Until then
+      // the body is marked stale and the indicator names both runs.
+      if (displayedRun && displayedRun.id !== id) {
+        setStale(true, `Loading Run ${formatInteger(id)}… still showing Run ${formatInteger(displayedRun.id)}`)
+      } else if (!displayedRun) {
+        document.querySelector('#selected-run-title').textContent = `Run ${formatInteger(id)}`
+        document.querySelector('#selected-run-meta').textContent = 'Loading selected run…'
+        setStale(true, `Loading Run ${formatInteger(id)}…`)
+      }
       renderList()
     },
     onSuccess: (run) => {
       if (!run) throw new Error('Selected run was not found.')
       displayedRun = run
-      updateStatus.hidden = true
+      document.querySelector('#selected-run-title').textContent = `Run ${formatInteger(run.id)}`
       document.querySelector('#selected-run-meta').textContent =
         `${formatInteger(run.length)} steps · ${formatInteger(anomalyCount(run))} flagged points`
-      document.querySelector('#run-announcement').textContent = `Run ${run.id} selected`
+      renderAnomalySummary(run)
       renderMetrics(run)
       renderCharts(run)
+      setStale(false)
+      document.querySelector('#run-announcement').textContent =
+        `Run ${formatInteger(run.id)} selected, ${formatInteger(anomalyCount(run))} flagged points`
     },
     onError: (exception) => {
-      updateStatus.hidden = false
-      updateStatus.textContent = exception instanceof Error ? exception.message : 'Run update failed.'
+      const reason = exception instanceof Error ? exception.message : 'Run update failed.'
+      setStale(true, displayedRun ? `${reason} Still showing Run ${formatInteger(displayedRun.id)}.` : reason)
     },
   },
 )
 
 function renderList() {
   const runs = filterAndSortRuns(sanitizedRuns, filter.value, sort, direction)
+  const hadFocus = list.contains(document.activeElement)
+  // Roving tabindex: exactly one row is in the tab order. Prefer the row the
+  // user was on, then the selected run, then the first visible row.
+  const ids = runs.map((run) => run.id)
+  activeOptionId = [activeOptionId, selectedRun?.id, ids[0]].find((id) => ids.includes(id)) ?? null
+
   list.innerHTML = runs
     .map(
       (run) => `
         <button class="run-row ${selectedRun?.id === run.id ? 'selected' : ''}" type="button" role="option"
-          aria-selected="${selectedRun?.id === run.id}" data-run-id="${run.id}">
+          aria-selected="${selectedRun?.id === run.id}" tabindex="${run.id === activeOptionId ? 0 : -1}" data-run-id="${run.id}">
           <span><strong>Run ${formatInteger(run.id)}</strong><small>${formatInteger(run.length)} steps</small></span>
           <span class="anomaly-badge ${anomalyCount(run) ? '' : 'clean'}">${formatInteger(anomalyCount(run))} anomalies</span>
         </button>
@@ -143,9 +186,24 @@ function renderList() {
     .join('')
   runCount.textContent = `${formatInteger(runs.length)} of ${formatInteger(sanitizedRuns.length)}`
   empty.hidden = runs.length !== 0
-  list.querySelectorAll('[data-run-id]').forEach((button) => {
-    button.addEventListener('click', () => selectionController.select(Number(button.dataset.runId)))
-  })
+  // Re-rendering replaces the rows; put focus back so keyboard users are not
+  // thrown out of the list after every selection.
+  if (hadFocus) list.querySelector('[tabindex="0"]')?.focus()
+}
+
+function focusOption(row) {
+  list.querySelectorAll('[data-run-id]').forEach((other) => other.setAttribute('tabindex', other === row ? '0' : '-1'))
+  activeOptionId = Number(row.dataset.runId)
+  row.focus()
+}
+
+function renderAnomalySummary(run) {
+  const counts = countAnomaliesByKind(run)
+  anomalySummary.innerHTML =
+    ANOMALY_KINDS.map(
+      ({ key, label }) =>
+        `<li class="anomaly-chip ${counts[key] ? '' : 'clean'}"><strong>${formatInteger(counts[key])}</strong> ${label}</li>`,
+    ).join('') + '<li class="anomaly-note">Flags are computed from loss.</li>'
 }
 
 function renderMetrics(run) {
@@ -153,7 +211,7 @@ function renderMetrics(run) {
     const summary = summarizeMetric(run, metric)
     return `
       <article class="metric-card">
-        <div class="metric-card-heading"><h3>${metric}</h3><span>${formatInteger(summary.anomalyCount)} flagged</span></div>
+        <div class="metric-card-heading"><h3>${metric}</h3><span class="${summary.nonFiniteCount ? 'non-finite-count' : ''}">${formatInteger(summary.nonFiniteCount)} non-finite</span></div>
         <strong>${formatNumber(summary.last)}</strong>
         <dl><div><dt>Min</dt><dd>${formatNumber(summary.min)}</dd></div><div><dt>Max</dt><dd>${formatNumber(summary.max)}</dd></div></dl>
       </article>
@@ -181,11 +239,13 @@ function renderCharts(run) {
     const viewState = createViewState([run.steps[0], run.steps[run.steps.length - 1]])
     let scales = null
     const redraw = () => {
-      const width = Math.max(320, canvas.parentElement.clientWidth)
+      // Draw in the canvas's own CSS box. Pointer positions are measured in
+      // CSS pixels, so any other width would make the crosshair report a
+      // different point from the one under the cursor. setupCanvas scales the
+      // backing store for high-DPI screens.
+      const width = Math.floor(canvas.clientWidth) || 320
       const height = 300
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
+      const ctx = setupCanvas(canvas, width, height)
       scales = renderChart(ctx, series, { width, height, xRange: viewState.getRange(), theme: 'light' })
       renderCrosshairOverlay(ctx, interactions.find((item) => item.canvas === canvas)?.getCrosshair(), scales.xScale, scales.yScale, scales.margins, scales.plotW, scales.plotH)
     }
@@ -196,7 +256,7 @@ function renderCharts(run) {
       getScales: () => scales || {},
       onRender: redraw,
       a11yTarget,
-      accessibleName: `${metric} chart for run ${run.id}`,
+      accessibleName: `${metric} chart for run ${formatInteger(run.id)}`,
     })
     interactions.push({ ...control, canvas })
   })
@@ -216,7 +276,9 @@ function loadDashboard() {
   error.hidden = true
   content.hidden = true
   status.textContent = 'Loading runs…'
-  requestAnimationFrame(() => {
+  // rAF callbacks run before the frame is painted, so the heavy synchronous
+  // generation waits one more task to let the loading state reach the screen.
+  const start = () => {
     try {
       sanitizedRuns = sanitizeDataset(generateDataset())
       loading.hidden = true
@@ -227,9 +289,23 @@ function loadDashboard() {
     } catch (exception) {
       showError(exception)
     }
-  })
+  }
+  requestAnimationFrame(() => setTimeout(start, 0))
 }
 
+list.addEventListener('click', (event) => {
+  const row = event.target.closest('[data-run-id]')
+  if (!row) return
+  activeOptionId = Number(row.dataset.runId)
+  selectionController.select(activeOptionId)
+})
+list.addEventListener('keydown', (event) => {
+  const rows = [...list.querySelectorAll('[data-run-id]')]
+  const next = nextOptionIndex(event.key, rows.indexOf(event.target.closest('[data-run-id]')), rows.length)
+  if (next === null) return
+  event.preventDefault()
+  focusOption(rows[next])
+})
 filter.addEventListener('input', renderList)
 sortSelect.addEventListener('change', () => {
   sort = sortSelect.value
