@@ -1,60 +1,233 @@
 import './style.css'
-import heroImg from './assets/hero.png'
-import javascriptLogo from './assets/javascript.svg'
-import viteLogo from './assets/vite.svg'
-import { setupCounter } from './counter.js'
+import { attachInteractions, createViewState, renderChart, renderCrosshairOverlay } from './chart/index.js'
+import { generateDataset } from './pipeline/generator.js'
+import { sanitizeDataset } from './pipeline/sanitizer.js'
+import { anomalyCount, filterAndSortRuns, METRICS, summarizeMetric } from './dashboard.js'
 
-document.querySelector('#app').innerHTML = `
-<section id="center">
-  <div class="hero">
-    <img src="${heroImg}" class="base" width="170" height="179">
-    <img src="${javascriptLogo}" class="framework" alt="JavaScript logo"/>
-    <img src="${viteLogo}" class="vite" alt="Vite logo" />
-  </div>
-  <div>
-    <h1>Get started</h1>
-    <p>Edit <code>src/main.js</code> and save to test <code>HMR</code></p>
-  </div>
-  <button id="counter" type="button" class="counter"></button>
-</section>
+const app = document.querySelector('#app')
+let interactions = []
+let selectedRun = null
+let sanitizedRuns = []
+let sort = 'id'
+let direction = 'asc'
 
-<div class="ticks"></div>
-
-<section id="next-steps">
-  <div id="docs">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#documentation-icon"></use></svg>
-    <h2>Documentation</h2>
-    <p>Your questions, answered</p>
-    <ul>
-      <li>
-        <a href="https://vite.dev/" target="_blank">
-          <img class="logo" src="${viteLogo}" alt="" />
-          Explore Vite
-        </a>
-      </li>
-      <li>
-        <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank">
-          <img class="button-icon" src="${javascriptLogo}" alt="">
-          Learn more
-        </a>
-      </li>
-    </ul>
+app.innerHTML = `
+  <div class="dashboard-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">TRAINING RUN MONITOR</p>
+        <h1>Run dashboard</h1>
+      </div>
+      <div id="dataset-status" class="status-chip" role="status">Loading runs…</div>
+    </header>
+    <main>
+      <section id="dashboard-loading" class="state-card" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <h2>Loading training runs</h2>
+        <p>Generating a deterministic dataset and checking its measurements.</p>
+      </section>
+      <section id="dashboard-error" class="state-card error-state" hidden role="alert">
+        <h2>Runs could not be loaded</h2>
+        <p id="dashboard-error-message"></p>
+        <button id="retry-button" class="button" type="button">Try again</button>
+      </section>
+      <section id="dashboard-content" hidden>
+        <div class="dashboard-grid">
+          <aside class="run-panel panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">DATASET</p>
+                <h2>Training runs</h2>
+              </div>
+              <span id="run-count" class="muted"></span>
+            </div>
+            <label class="search-label" for="run-filter">Filter by run ID</label>
+            <input id="run-filter" class="text-input" type="search" placeholder="e.g. 1" />
+            <div class="sort-controls">
+              <label for="run-sort">Sort by</label>
+              <select id="run-sort" class="select-input">
+                <option value="id">Run ID</option>
+                <option value="anomalies">Anomalies</option>
+                <option value="length">Length</option>
+              </select>
+              <button id="sort-direction" class="icon-button" type="button" aria-label="Sort ascending">↑</button>
+            </div>
+            <div id="run-list" class="run-list" role="listbox" aria-label="Training runs"></div>
+            <div id="run-empty" class="empty-state" hidden>No runs match this filter.</div>
+          </aside>
+          <section class="detail-panel">
+            <div id="detail-empty" class="state-card" hidden>
+              <h2>Select a run</h2>
+              <p>Choose a run from the list to inspect its metrics.</p>
+            </div>
+            <div id="run-detail" hidden>
+              <div class="detail-heading">
+                <div>
+                  <p class="eyebrow">SELECTED RUN</p>
+                  <h2 id="selected-run-title"></h2>
+                  <p id="selected-run-meta" class="muted"></p>
+                </div>
+                <div id="run-announcement" class="sr-only" aria-live="polite"></div>
+              </div>
+              <div id="metric-cards" class="metric-cards"></div>
+              <div id="chart-panels" class="chart-panels"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
   </div>
-  <div id="social">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#social-icon"></use></svg>
-    <h2>Connect with us</h2>
-    <p>Join the Vite community</p>
-    <ul>
-      <li><a href="https://github.com/vitejs/vite" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#github-icon"></use></svg>GitHub</a></li>
-      <li><a href="https://chat.vite.dev/" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#discord-icon"></use></svg>Discord</a></li>
-      <li><a href="https://x.com/vite_js" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#x-icon"></use></svg>X.com</a></li>
-      <li><a href="https://bsky.app/profile/vite.dev" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#bluesky-icon"></use></svg>Bluesky</a></li>
-    </ul>
-  </div>
-</section>
-
-<div class="ticks"></div>
-<section id="spacer"></section>
 `
 
-setupCounter(document.querySelector('#counter'))
+const loading = document.querySelector('#dashboard-loading')
+const error = document.querySelector('#dashboard-error')
+const content = document.querySelector('#dashboard-content')
+const status = document.querySelector('#dataset-status')
+const list = document.querySelector('#run-list')
+const empty = document.querySelector('#run-empty')
+const filter = document.querySelector('#run-filter')
+const sortSelect = document.querySelector('#run-sort')
+const directionButton = document.querySelector('#sort-direction')
+const runCount = document.querySelector('#run-count')
+const metricCards = document.querySelector('#metric-cards')
+const chartPanels = document.querySelector('#chart-panels')
+
+const formatNumber = (value) => {
+  if (!Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 5 }).format(value)
+}
+
+function renderList() {
+  const runs = filterAndSortRuns(sanitizedRuns, filter.value, sort, direction)
+  list.innerHTML = runs
+    .map(
+      (run) => `
+        <button class="run-row ${selectedRun?.id === run.id ? 'selected' : ''}" type="button" role="option"
+          aria-selected="${selectedRun?.id === run.id}" data-run-id="${run.id}">
+          <span><strong>Run ${run.id}</strong><small>${run.length.toLocaleString('en-US')} steps</small></span>
+          <span class="anomaly-badge ${anomalyCount(run) ? '' : 'clean'}">${anomalyCount(run)} anomalies</span>
+        </button>
+      `,
+    )
+    .join('')
+  runCount.textContent = `${runs.length} of ${sanitizedRuns.length}`
+  empty.hidden = runs.length !== 0
+  list.querySelectorAll('[data-run-id]').forEach((button) => {
+    button.addEventListener('click', () => selectRun(Number(button.dataset.runId)))
+  })
+}
+
+function renderMetrics(run) {
+  metricCards.innerHTML = METRICS.map((metric) => {
+    const summary = summarizeMetric(run, metric)
+    return `
+      <article class="metric-card">
+        <div class="metric-card-heading"><h3>${metric}</h3><span>${summary.anomalyCount} flagged</span></div>
+        <strong>${formatNumber(summary.last)}</strong>
+        <dl><div><dt>Min</dt><dd>${formatNumber(summary.min)}</dd></div><div><dt>Max</dt><dd>${formatNumber(summary.max)}</dd></div></dl>
+      </article>
+    `
+  }).join('')
+}
+
+function renderCharts(run) {
+  interactions.forEach(({ destroy }) => destroy())
+  interactions = []
+  chartPanels.innerHTML = METRICS.map(
+    (metric) => `
+      <article class="chart-card">
+        <div class="chart-heading"><h3>${metric}</h3><span>Raw + smoothed</span></div>
+        <canvas data-chart="${metric}" width="800" height="300"></canvas>
+        <p class="chart-help" data-a11y="${metric}">Use arrow keys to pan and Shift+Arrow to inspect points.</p>
+      </article>
+    `,
+  ).join('')
+
+  METRICS.forEach((metric) => {
+    const canvas = chartPanels.querySelector(`[data-chart="${metric}"]`)
+    const a11yTarget = chartPanels.querySelector(`[data-a11y="${metric}"]`)
+    const series = { steps: run.steps, values: run[metric], anomaly: run.anomaly }
+    const viewState = createViewState([run.steps[0], run.steps[run.steps.length - 1]])
+    let scales = null
+    const redraw = () => {
+      const width = Math.max(320, canvas.parentElement.clientWidth)
+      const height = 300
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      scales = renderChart(ctx, series, { width, height, xRange: viewState.getRange(), theme: 'light' })
+      renderCrosshairOverlay(ctx, interactions.find((item) => item.canvas === canvas)?.getCrosshair(), scales.xScale, scales.yScale, scales.margins, scales.plotW, scales.plotH)
+    }
+    redraw()
+    const control = attachInteractions(canvas, {
+      rawSeries: series,
+      viewState,
+      getScales: () => scales || {},
+      onRender: redraw,
+      a11yTarget,
+      accessibleName: `${metric} chart for run ${run.id}`,
+    })
+    interactions.push({ ...control, canvas })
+  })
+}
+
+function selectRun(id) {
+  selectedRun = sanitizedRuns.find((run) => run.id === id) || null
+  if (!selectedRun) return
+  document.querySelector('#detail-empty').hidden = true
+  document.querySelector('#run-detail').hidden = false
+  document.querySelector('#selected-run-title').textContent = `Run ${selectedRun.id}`
+  document.querySelector('#selected-run-meta').textContent =
+    `${selectedRun.length.toLocaleString('en-US')} steps · ${anomalyCount(selectedRun)} flagged points`
+  document.querySelector('#run-announcement').textContent = `Run ${selectedRun.id} selected`
+  renderList()
+  renderMetrics(selectedRun)
+  renderCharts(selectedRun)
+}
+
+function showError(exception) {
+  loading.hidden = true
+  content.hidden = true
+  error.hidden = false
+  document.querySelector('#dashboard-error-message').textContent =
+    exception instanceof Error ? exception.message : 'An unexpected error occurred.'
+  status.textContent = 'Load failed'
+}
+
+function loadDashboard() {
+  loading.hidden = false
+  error.hidden = true
+  content.hidden = true
+  status.textContent = 'Loading runs…'
+  requestAnimationFrame(() => {
+    try {
+      sanitizedRuns = sanitizeDataset(generateDataset())
+      selectedRun = sanitizedRuns[0]
+      loading.hidden = true
+      content.hidden = false
+      status.textContent = `${sanitizedRuns.length} runs ready`
+      renderList()
+      selectRun(selectedRun.id)
+    } catch (exception) {
+      showError(exception)
+    }
+  })
+}
+
+filter.addEventListener('input', renderList)
+sortSelect.addEventListener('change', () => {
+  sort = sortSelect.value
+  renderList()
+})
+directionButton.addEventListener('click', () => {
+  direction = direction === 'asc' ? 'desc' : 'asc'
+  directionButton.textContent = direction === 'asc' ? '↑' : '↓'
+  directionButton.setAttribute('aria-label', `Sort ${direction === 'asc' ? 'ascending' : 'descending'}`)
+  renderList()
+})
+document.querySelector('#retry-button').addEventListener('click', loadDashboard)
+window.addEventListener('resize', () => {
+  if (selectedRun && !content.hidden) renderCharts(selectedRun)
+})
+
+loadDashboard()
