@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   anomalyCount,
   countAnomaliesByKind,
+  countNonPositive,
+  describeChartMode,
   filterAndSortRuns,
   nextOptionIndex,
+  SMOOTHING,
   summarizeMetric,
 } from './dashboard.js'
 import { ANOMALY } from './pipeline/sanitizer.js'
@@ -78,5 +81,43 @@ describe('dashboard helpers', () => {
     expect(nextOptionIndex('End', 0, 3)).toBe(2)
     expect(nextOptionIndex('a', 0, 3)).toBeNull()
     expect(nextOptionIndex('ArrowDown', 0, 0)).toBeNull()
+  })
+})
+
+describe('chart mode helpers', () => {
+  const format = { integer: (n) => `#${n}`, number: (n) => `~${n}` }
+
+  it('counts only finite values a log axis cannot place', () => {
+    expect(countNonPositive(Float64Array.from([1, 0, -2, NaN, -Infinity, Infinity, 1e-9]))).toBe(2)
+    expect(countNonPositive(new Float64Array(0))).toBe(0)
+  })
+
+  it('says when no smoothing is applied', () => {
+    expect(describeChartMode({ scaleType: 'linear', smoothing: 0, nonPositive: 3 }, format)).toBe(
+      'Raw only, no smoothing',
+    )
+  })
+
+  it('names the smoothing weight', () => {
+    expect(describeChartMode({ scaleType: 'linear', smoothing: 0.8, nonPositive: 0 }, format)).toBe(
+      'Raw + smoothed (EMA ~0.8)',
+    )
+  })
+
+  it('reports how many values a log axis leaves out', () => {
+    expect(describeChartMode({ scaleType: 'log', smoothing: 0.8, nonPositive: 2 }, format)).toContain(
+      'log scale: #2 values ≤ 0 cannot be placed',
+    )
+    expect(describeChartMode({ scaleType: 'log', smoothing: 0, nonPositive: 1 }, format)).toContain('#1 value ≤ 0')
+    expect(describeChartMode({ scaleType: 'log', smoothing: 0, nonPositive: 0 }, format)).toBe(
+      'Raw only, no smoothing · log scale',
+    )
+  })
+
+  it('offers a smoothing range that includes "off" and never reaches 1', () => {
+    expect(SMOOTHING.min).toBe(0)
+    expect(SMOOTHING.max).toBeLessThan(1)
+    expect(SMOOTHING.initial).toBeGreaterThanOrEqual(SMOOTHING.min)
+    expect(SMOOTHING.initial).toBeLessThanOrEqual(SMOOTHING.max)
   })
 })

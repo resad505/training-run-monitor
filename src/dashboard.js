@@ -96,3 +96,38 @@ export function nextOptionIndex(key, current, count) {
       return null
   }
 }
+
+/** Smoothing weights offered by the UI; 0 draws the raw series only. */
+export const SMOOTHING = Object.freeze({ min: 0, max: 0.95, step: 0.05, initial: 0.8 })
+
+/**
+ * Finite values a log axis cannot place (zero or negative). They are drawn as
+ * markers by the renderer; this count lets the UI say how many there are.
+ */
+export function countNonPositive(values) {
+  let count = 0
+  for (let i = 0; i < values.length; i++) {
+    if (Number.isFinite(values[i]) && values[i] <= 0) count++
+  }
+  return count
+}
+
+/**
+ * One-line description of how a chart is currently drawn, so a reader never
+ * has to guess whether they are looking at raw or smoothed data, or whether a
+ * log axis has left points out.
+ *
+ * @param {{ scaleType: 'linear' | 'log', smoothing: number, nonPositive: number }} mode
+ * @param {{ integer: (n: number) => string, number: (n: number) => string }} format
+ */
+export function describeChartMode({ scaleType, smoothing, nonPositive }, format) {
+  const parts = [smoothing > 0 ? `Raw + smoothed (EMA ${format.number(smoothing)})` : 'Raw only, no smoothing']
+  if (scaleType === 'log') {
+    parts.push(
+      nonPositive > 0
+        ? `log scale: ${format.integer(nonPositive)} ${nonPositive === 1 ? 'value' : 'values'} ≤ 0 cannot be placed, marked ≤0`
+        : 'log scale',
+    )
+  }
+  return parts.join(' · ')
+}
