@@ -27,14 +27,15 @@ h3 { color: #172033; font-size: 1rem; margin: 0; }
 .run-panel { padding: 20px; position: sticky; top: 20px; }
 .panel-heading, .sort-controls, .chart-heading, .metric-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .search-label, .sort-controls label { display: block; color: #53617a; font-size: 0.78rem; font-weight: 700; margin: 20px 0 6px; }
-.text-input, .select-input { border: 1px solid #b8c5d8; border-radius: 8px; color: #172033; background: #fff; padding: 9px 10px; width: 100%; }
-.text-input:focus, .select-input:focus, .button:focus-visible, .icon-button:focus-visible, .run-row:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+.text-input, .select-input { border: 1px solid #64748b; border-radius: 8px; color: #172033; background: #fff; padding: 9px 10px; width: 100%; }
+.text-input:focus, .select-input:focus, .button:focus-visible, .icon-button:focus-visible, .run-row:focus-visible, canvas:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
 .sort-controls { align-items: end; margin-bottom: 10px; }
-.sort-controls label { flex: 1; margin: 0; }
-.icon-button, .button { border: 1px solid #9db1cd; border-radius: 8px; background: #fff; color: #1d4ed8; padding: 8px 11px; }
+.sort-controls label { flex: none; margin: 0 0 10px; white-space: nowrap; }
+.icon-button, .button { border: 1px solid #64748b; border-radius: 8px; background: #fff; color: #1d4ed8; padding: 8px 11px; }
 .run-list { display: grid; gap: 6px; max-height: 65vh; overflow: auto; }
 .run-row { align-items: center; background: #fff; border: 1px solid transparent; border-radius: 9px; color: #172033; display: flex; justify-content: space-between; padding: 10px; text-align: left; width: 100%; }
-.run-row:hover, .run-row.selected { background: #eff6ff; border-color: #93c5fd; }
+.run-row:hover { background: #eff6ff; border-color: #93c5fd; }
+.run-row.selected { background: #eff6ff; border-color: #1d4ed8; box-shadow: inset 3px 0 0 #1d4ed8; }
 .run-row span:first-child { display: grid; gap: 2px; }
 .run-row small { color: #53617a; }
 .anomaly-badge { background: #fff1f2; color: #be123c; font-size: 0.68rem; padding: 4px 7px; }
@@ -43,6 +44,12 @@ h3 { color: #172033; font-size: 1rem; margin: 0; }
 .detail-panel { min-width: 0; }
 .detail-heading { margin: 4px 0 18px; }
 .update-status { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412; display: inline-block; font-size: 0.78rem; font-weight: 700; margin-top: 10px; padding: 6px 9px; }
+.anomaly-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; list-style: none; margin: 0 0 16px; padding: 0; }
+.anomaly-chip { background: #fff1f2; border-radius: 999px; color: #be123c; font-size: 0.75rem; padding: 4px 10px; }
+.anomaly-chip.clean { background: #ecfdf5; color: #047857; }
+.anomaly-note { color: #53617a; font-size: 0.72rem; }
+.metric-card-heading span.non-finite-count { color: #be123c; font-weight: 700; }
+#run-body.is-stale { opacity: 0.55; }
 .metric-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
 .metric-card, .chart-card { background: #fff; border: 1px solid #dce3ee; border-radius: 14px; padding: 16px; }
 .metric-card-heading span, .chart-heading span { color: #53617a; font-size: 0.72rem; }

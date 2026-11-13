@@ -1,5 +1,26 @@
 # Training Run Monitor
 
+A dashboard for inspecting machine-learning training runs (`loss`, `lr`,
+`grad_norm`) that shows corrupted data as it is: NaN, Infinity, gaps,
+duplicates and spikes are flagged and drawn, never hidden or smoothed away.
+
+- Design decisions, trade-offs, edge cases and the limits of the tests:
+  [ARCHITECTURE.md](ARCHITECTURE.md)
+
+## Run it
+
+```bash
+npm ci
+npm run dev     # local app
+npm run lint
+npm run test    # unit tests and the truthfulness proofs (a-d)
+npm run build
+```
+
+Keyboard: Tab reaches the run list, arrow keys / Home / End move through it,
+Enter selects. On a focused chart, arrows pan and zoom, Shift+Left/Right step
+through points, `[` and `]` jump between anomalies, Home resets.
+
 ## Decimation benchmark
 
 Issue #20 provides one harness for comparing the legacy object-array main-thread

@@ -38,8 +38,10 @@ export function formatUtcTime(value) {
 
 /**
  * Format a finite tick so Number(label) remains exactly the original value.
- * The locale is still fixed through Intl.NumberFormat rather than relying on
- * the viewer's locale.
+ * Deliberately not Intl.NumberFormat: grouping separators and significant-digit
+ * rounding would break that round trip. String() and toExponential() are
+ * defined by ECMAScript without reference to the viewer's locale, so the
+ * output is still deterministic.
  */
 export function formatTickNumber(value) {
   if (!Number.isFinite(value)) return formatNumber(value)

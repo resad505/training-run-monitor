@@ -443,7 +443,8 @@ function renderMarkers(ctx, points, xScale, yScale, margins, plotH) {
     if (!Number.isFinite(v) || notPlottable) {
       const isNaNVal = Number.isNaN(v)
       const badgeText = notPlottable ? '≤0' : isNaNVal ? 'NaN' : v > 0 ? '+∞' : '-∞'
-      const markerColor = isNaNVal ? '#ef4444' : notPlottable ? '#8b5cf6' : '#f59e0b'
+      // Dark enough for the white badge text to reach 4.5:1 (WCAG AA).
+      const markerColor = isNaNVal ? '#b91c1c' : notPlottable ? '#6d28d9' : '#b45309'
       drawVerticalBadge(ctx, px, badgeText, markerColor, margins, plotH)
     }
 
