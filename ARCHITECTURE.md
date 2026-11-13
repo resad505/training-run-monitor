@@ -159,9 +159,12 @@ Web Worker.
     produce a large output; truthfulness was chosen over a hard cap.
   - Not LTTB: the result preserves extremes, not visual shape. For dense noisy
     series the line looks like a band — which is what the data is.
-  - Stateless: every redraw rescans the visible window (`O(window)`). There is
-    no multi-resolution pyramid, so a full-range redraw of the 1M run scans 1M
-    values each time.
+  - Stateless: a decimation rescans the visible window (`O(window)`). There is
+    no multi-resolution pyramid, so a full-range zoom step on the 1M run scans
+    1M values. The renderer avoids the scan only when nothing that affects it
+    changed (same buffers, width and x-range), which covers hover, y-scale and
+    smoothing changes but not zoom or pan. Measured: zoom redraws did not get
+    faster (see the README).
 - **Edge cases:** empty input; window outside the data; inverted range;
   windows short enough to pass through untouched; one extra point on each side
   of the window so lines reach the plot edges.
@@ -216,8 +219,13 @@ Web Worker.
   chart. The price is that the chart must describe itself, so each canvas has
   a label listing its keys and a live region with the inspected point.
 - **Trade-offs:**
-  - Every pointer move triggers a full redraw, including decimation. Simple
-    and always consistent; not throttled to animation frames.
+  - Pointer and wheel redraws are coalesced to one per animation frame, so the
+    drawn scale can be one or more events behind the view state. Zoom
+    therefore anchors on the view state rather than on the last drawn scale,
+    otherwise the point under the cursor would drift. Keyboard actions still
+    redraw synchronously because they read the new scale immediately.
+  - Nothing is redrawn while the tab is hidden (no animation frames); the
+    view state still updates and the next visible frame catches up.
   - The wheel always zooms, so the page cannot be scrolled while the pointer
     is over a chart.
   - Tooltip values are printed at full precision (round-trippable), which is
@@ -301,9 +309,17 @@ Web Worker.
 - **Trade-offs:**
   - No framework. The run list is re-rendered as a string on each change; with
     20 rows this is cheap, and focus is restored explicitly afterwards.
-  - All 20 runs, including the 1M-step one, are generated and sanitized
-    synchronously on the main thread at start-up. The loading state is painted
-    first, but the page is unresponsive while it runs.
+  - The dataset is generated and sanitized in a Web Worker
+    (`pipeline/dataset.worker.js`) and delivered run by run, smallest first,
+    with buffers transferred rather than copied. The first chart no longer
+    waits for the 1M-step run, and the main thread is never blocked by
+    generation. The price is a list that is briefly incomplete: the panel
+    states how many runs are still loading so a short list is not mistaken
+    for the whole dataset.
+  - `dataset-loader.js` ignores every message after `done`, an error or
+    `cancel()`, so Retry cannot receive runs from the load it replaced.
+  - Steady-state memory is **higher** with the worker than without it, even
+    though the worker is terminated (measured; see the README). Unresolved.
   - The run list is a listbox with a roving tab stop: one Tab stop, arrows /
     Home / End move, Enter or Space selects. Selection does not follow focus,
     so arrowing through the list does not redraw three charts per key press.
@@ -341,6 +357,21 @@ Web Worker.
 - **Does not catch:** a broken page that still builds — nothing loads the
   deployed site and checks it automatically.
 
+### Performance measurement (`perf.js`, `scripts/measure.mjs`)
+
+- **Why:** `perf.js` wraps the dataset build, first render and every redraw
+  in `performance.measure`, so the sections are visible in a DevTools trace
+  and readable from `window.__perf.summary()`. `scripts/measure.mjs` drives a
+  local headless Chrome over the DevTools Protocol with CPU throttling and
+  writes the numbers and a trace to `perf/`, so before/after figures come from
+  the same script rather than from memory.
+- **Trade-offs:** the instrumentation stays in the production build (two
+  timestamps and an array push per redraw, capped at 2,000 samples per name).
+- **Does not measure:** time from input to pixels on screen — "redraw" is the
+  JavaScript cost of drawing, not compositing or presentation. CPU throttling
+  does not slow Web Workers. Memory is the renderer's working set, sampled a
+  few times, not a true peak. Headless Chrome on one machine.
+
 ---
 
 ## Truthfulness proofs (`test/truthfulness.test.js`)
@@ -372,10 +403,13 @@ than the shape.
 fabricated measurement. A missing value is information ("the logger dropped
 here"); the chart shows it as a broken line with a marker.
 
-**What happens with 10M points?** It would still be correct, but slow: the
-generator and sanitizer work on object arrays, start-up is synchronous, and
-each redraw rescans the window. The next steps would be to sanitize in a
-Worker and to precompute a min/max pyramid so a redraw costs `O(width)`.
+**What happens with 10M points?** It would still be correct, but zoom and pan
+would be slow: each step rescans the visible window, and that cost grows with
+the data. Generation already runs in a Worker, so start-up would stay
+responsive but take longer and use far more memory, because the generator
+builds one object per step. The next steps are a precomputed min/max pyramid
+(a redraw then costs `O(width)` and must still keep every flagged and
+non-finite point) and generating straight into typed arrays.
 
 **Where can this still mislead?**
 1. Flags come from `loss` only but appear on all three charts.
