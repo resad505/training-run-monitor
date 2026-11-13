@@ -15,7 +15,7 @@
  */
 
 import { binarySearchFirstGe, binarySearchLastLe } from './downsample.js'
-import { formatTickNumber } from './scale.js'
+import { formatTickNumber } from '../formatters.js'
 import { ANOMALY } from '../pipeline/sanitizer.js'
 
 const ANOMALY_NAMES = [

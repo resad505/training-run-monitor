@@ -4,6 +4,7 @@ import { generateDataset } from './pipeline/generator.js'
 import { sanitizeDataset } from './pipeline/sanitizer.js'
 import { anomalyCount, filterAndSortRuns, METRICS, summarizeMetric } from './dashboard.js'
 import { createRunSelectionController } from './run-loader.js'
+import { formatInteger, formatNumber, formatUtcTime } from './formatters.js'
 
 const app = document.querySelector('#app')
 let interactions = []
@@ -96,11 +97,6 @@ const metricCards = document.querySelector('#metric-cards')
 const chartPanels = document.querySelector('#chart-panels')
 const updateStatus = document.querySelector('#run-update-status')
 
-const formatNumber = (value) => {
-  if (!Number.isFinite(value)) return '—'
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 5 }).format(value)
-}
-
 const selectionController = createRunSelectionController(
   (id) => Promise.resolve(sanitizedRuns.find((run) => run.id === id)),
   {
@@ -120,7 +116,7 @@ const selectionController = createRunSelectionController(
       displayedRun = run
       updateStatus.hidden = true
       document.querySelector('#selected-run-meta').textContent =
-        `${run.length.toLocaleString('en-US')} steps · ${anomalyCount(run)} flagged points`
+        `${formatInteger(run.length)} steps · ${formatInteger(anomalyCount(run))} flagged points`
       document.querySelector('#run-announcement').textContent = `Run ${run.id} selected`
       renderMetrics(run)
       renderCharts(run)
@@ -139,13 +135,13 @@ function renderList() {
       (run) => `
         <button class="run-row ${selectedRun?.id === run.id ? 'selected' : ''}" type="button" role="option"
           aria-selected="${selectedRun?.id === run.id}" data-run-id="${run.id}">
-          <span><strong>Run ${run.id}</strong><small>${run.length.toLocaleString('en-US')} steps</small></span>
-          <span class="anomaly-badge ${anomalyCount(run) ? '' : 'clean'}">${anomalyCount(run)} anomalies</span>
+          <span><strong>Run ${formatInteger(run.id)}</strong><small>${formatInteger(run.length)} steps</small></span>
+          <span class="anomaly-badge ${anomalyCount(run) ? '' : 'clean'}">${formatInteger(anomalyCount(run))} anomalies</span>
         </button>
       `,
     )
     .join('')
-  runCount.textContent = `${runs.length} of ${sanitizedRuns.length}`
+  runCount.textContent = `${formatInteger(runs.length)} of ${formatInteger(sanitizedRuns.length)}`
   empty.hidden = runs.length !== 0
   list.querySelectorAll('[data-run-id]').forEach((button) => {
     button.addEventListener('click', () => selectionController.select(Number(button.dataset.runId)))
@@ -157,7 +153,7 @@ function renderMetrics(run) {
     const summary = summarizeMetric(run, metric)
     return `
       <article class="metric-card">
-        <div class="metric-card-heading"><h3>${metric}</h3><span>${summary.anomalyCount} flagged</span></div>
+        <div class="metric-card-heading"><h3>${metric}</h3><span>${formatInteger(summary.anomalyCount)} flagged</span></div>
         <strong>${formatNumber(summary.last)}</strong>
         <dl><div><dt>Min</dt><dd>${formatNumber(summary.min)}</dd></div><div><dt>Max</dt><dd>${formatNumber(summary.max)}</dd></div></dl>
       </article>
@@ -225,7 +221,7 @@ function loadDashboard() {
       sanitizedRuns = sanitizeDataset(generateDataset())
       loading.hidden = true
       content.hidden = false
-      status.textContent = `${sanitizedRuns.length} runs ready`
+      status.textContent = `${formatInteger(sanitizedRuns.length)} runs ready · ${formatUtcTime(new Date())}`
       renderList()
       selectionController.select(sanitizedRuns[0].id)
     } catch (exception) {
