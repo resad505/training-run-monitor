@@ -4,11 +4,11 @@ function createWorker() {
 
 function toTypedInput(input) {
   return {
-    steps: input.steps instanceof Float64Array ? input.steps : Float64Array.from(input.steps),
-    values: input.values instanceof Float64Array ? input.values : Float64Array.from(input.values),
+    steps: input.steps instanceof Float64Array ? input.steps.slice() : Float64Array.from(input.steps),
+    values: input.values instanceof Float64Array ? input.values.slice() : Float64Array.from(input.values),
     anomaly: input.anomaly
       ? input.anomaly instanceof Uint8Array
-        ? input.anomaly
+        ? input.anomaly.slice()
         : Uint8Array.from(input.anomaly)
       : undefined,
     targetWidth: input.targetWidth,

@@ -20,6 +20,9 @@ const result = await benchmarkDownsampling({
 console.table(result)
 ```
 
+`downsampleInWorker` copies typed inputs before transferring them, so this
+benchmark does not detach or mutate `run.steps`, `run.loss`, or `run.anomaly`.
+
 The harness reports both durations, output point counts and an equivalence
 boolean. Both paths use the same 1,000,000-point input and the same
 extrema-preserving algorithm; only the transport and input representation
@@ -32,8 +35,8 @@ Measured in Chromium on 2026-11-13 with DevTools **4x CPU throttling**, an
 
 | Path | Duration | Output points |
 | --- | ---: | ---: |
-| Before: object arrays on main thread | 8,494.1 ms | 1,607 |
-| After: TypedArray + Web Worker | 298.4 ms | 1,607 |
+| Before: object arrays on main thread | 345.7 ms | 1,607 |
+| After: TypedArray + Web Worker | 53.4 ms | 1,607 |
 
 `equivalent` was `true`. Timings are a reference measurement, not a
 performance contract; rerun the harness on the target browser and hardware.
