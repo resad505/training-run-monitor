@@ -1,0 +1,60 @@
+{
+  "label": "after",
+  "url": "http://localhost:4173/",
+  "measuredAt": "2026-11-13T15:46:18.477Z",
+  "browser": "Chrome/157.0.8103.51",
+  "cpuThrottle": "4x",
+  "viewport": "1280x900 @1x, headless",
+  "chartCssWidth": 823,
+  "startup": {
+    "firstContentfulPaintMs": 244,
+    "firstRenderMs": 470.5,
+    "allRunsReadyMs": 916,
+    "mainThreadDatasetBuildMs": null,
+    "longestMainThreadBlockMs": 218,
+    "totalLongTaskMs": 357
+  },
+  "openLargeRun": {
+    "renderThreeChartsMs": 595.8,
+    "observedClickToTitleMs": 1137
+  },
+  "zoom": {
+    "events": 40,
+    "redraws": 40,
+    "redrawMs": {
+      "count": 40,
+      "median": 38.7,
+      "p95": 59,
+      "max": 73.3
+    },
+    "totalRedrawMs": 1647.6,
+    "wallMs": 2072,
+    "longTasks": 9,
+    "longestBlockMs": 83
+  },
+  "hover": {
+    "events": 80,
+    "redraws": 80,
+    "redrawMs": {
+      "count": 80,
+      "median": 5.1,
+      "p95": 8.1,
+      "max": 23.2
+    },
+    "totalRedrawMs": 458,
+    "wallMs": 1695,
+    "longTasks": 0,
+    "longestBlockMs": 0
+  },
+  "memory": {
+    "workersAliveAtEnd": 0,
+    "rendererAfterMemoryPressureMb": 342.5,
+    "rendererAfterStartupMb": 315.6,
+    "jsHeapAfterStartupMb": 1.1,
+    "rendererWith1MRunAfterGcMb": 341.1,
+    "jsHeapWith1MRunAfterGcMb": 1.1,
+    "jsHeapWith1MRunBeforeGcMb": 2.2
+  },
+  "crosshairText": "Step 974,083: value 0.1867103114402548. This pixel covers 1,365 points, range 0.12821123249693445 to 0.21337175495208463",
+  "traceFile": "perf/after.trace.json.gz"
+}

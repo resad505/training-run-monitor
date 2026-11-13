@@ -377,3 +377,88 @@ describe('renderCrosshairOverlay — tooltip placement', () => {
     expect(calls).toEqual([])
   })
 })
+
+describe('attachInteractions — pointer and wheel behaviour', () => {
+  function setup({ withScheduler = true } = {}) {
+    const listeners = {}
+    const canvas = {
+      setAttribute: () => {},
+      addEventListener: (name, fn) => (listeners[name] = fn),
+      removeEventListener: () => {},
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 300 }),
+    }
+    const steps = Float64Array.from({ length: 1001 }, (_, i) => i)
+    const values = Float64Array.from(steps, (i) => i / 10)
+    const viewState = createViewState([0, 1000])
+    const counts = { sync: 0, scheduled: 0 }
+    // The scale is deliberately frozen at the full range: with coalesced
+    // redraws it lags behind the view state between frames.
+    const staleScale = createLinearScale({ domain: [0, 1000], range: [0, 800] })
+    const api = attachInteractions(canvas, {
+      rawSeries: { steps, values },
+      viewState,
+      getScales: () => ({ xScale: staleScale, yScale: null }),
+      onRender: () => counts.sync++,
+      ...(withScheduler ? { scheduleRender: () => counts.scheduled++ } : {}),
+    })
+    const wheel = (clientX, deltaY) => listeners.wheel({ clientX, deltaY, preventDefault: () => {} })
+    return { listeners, viewState, counts, api, wheel }
+  }
+
+  it('routes wheel, hover and pointer-leave through the scheduler, not the synchronous render', () => {
+    const { listeners, counts, wheel } = setup()
+
+    wheel(400, -100)
+    listeners.pointermove({ clientX: 200 })
+    listeners.pointerleave({})
+
+    expect(counts).toEqual({ sync: 0, scheduled: 3 })
+  })
+
+  it('falls back to the synchronous render when no scheduler is given', () => {
+    const { counts, wheel } = setup({ withScheduler: false })
+
+    wheel(400, -100)
+
+    expect(counts.sync).toBe(1)
+  })
+
+  it('keeps the step under the cursor fixed across wheel events between redraws', () => {
+    const { viewState, wheel } = setup()
+    // Cursor at 25% of the plot. Several wheel events arrive before any
+    // redraw, so the scale is stale the whole time.
+    const anchor = () => {
+      const [r0, r1] = viewState.getRange()
+      return r0 + 0.25 * (r1 - r0)
+    }
+    const before = anchor()
+
+    for (let i = 0; i < 5; i++) wheel(200, -100)
+
+    expect(viewState.getRange()[1] - viewState.getRange()[0]).toBeCloseTo(1000 * 0.8 ** 5, 6)
+    expect(anchor()).toBeCloseTo(before, 6)
+  })
+
+  it('drag pans by the distance the pointer travelled, not a compounding amount', () => {
+    const { listeners, viewState } = setup()
+    viewState.zoomAt(500, 0.2) // 200-step window: [400, 600]
+    const [start0] = viewState.getRange()
+
+    listeners.pointerdown({ button: 0, clientX: 400, pointerId: 1 })
+    // Three moves of 40 px each = 120 px to the left in total.
+    for (const clientX of [360, 320, 280]) listeners.pointermove({ clientX })
+    listeners.pointerup({ pointerId: 1 })
+
+    // 800 px show 200 steps, so 120 px is 30 steps (dragging left moves forward).
+    expect(viewState.getRange()[0]).toBeCloseTo(start0 + 30, 6)
+  })
+
+  it('hover inspects the raw point under the cursor', () => {
+    const { listeners, api } = setup()
+
+    listeners.pointermove({ clientX: 400 })
+
+    expect(api.getCrosshair().step).toBe(500)
+    expect(api.getCrosshair().value).toBe(50)
+  })
+})
