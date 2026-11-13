@@ -3,10 +3,12 @@ import { attachInteractions, createViewState, renderChart, renderCrosshairOverla
 import { generateDataset } from './pipeline/generator.js'
 import { sanitizeDataset } from './pipeline/sanitizer.js'
 import { anomalyCount, filterAndSortRuns, METRICS, summarizeMetric } from './dashboard.js'
+import { createRunSelectionController } from './run-loader.js'
 
 const app = document.querySelector('#app')
 let interactions = []
 let selectedRun = null
+let displayedRun = null
 let sanitizedRuns = []
 let sort = 'id'
 let direction = 'asc'
@@ -68,6 +70,7 @@ app.innerHTML = `
                   <p id="selected-run-meta" class="muted"></p>
                 </div>
                 <div id="run-announcement" class="sr-only" aria-live="polite"></div>
+                <div id="run-update-status" class="update-status" role="status" hidden>Updating selected run…</div>
               </div>
               <div id="metric-cards" class="metric-cards"></div>
               <div id="chart-panels" class="chart-panels"></div>
@@ -91,11 +94,43 @@ const directionButton = document.querySelector('#sort-direction')
 const runCount = document.querySelector('#run-count')
 const metricCards = document.querySelector('#metric-cards')
 const chartPanels = document.querySelector('#chart-panels')
+const updateStatus = document.querySelector('#run-update-status')
 
 const formatNumber = (value) => {
   if (!Number.isFinite(value)) return '—'
   return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 5 }).format(value)
 }
+
+const selectionController = createRunSelectionController(
+  (id) => Promise.resolve(sanitizedRuns.find((run) => run.id === id)),
+  {
+    onStart: (id) => {
+      selectedRun = sanitizedRuns.find((run) => run.id === id) || null
+      if (!selectedRun) return
+      updateStatus.hidden = false
+      updateStatus.textContent = `Updating Run ${id}…`
+      document.querySelector('#detail-empty').hidden = true
+      document.querySelector('#run-detail').hidden = false
+      document.querySelector('#selected-run-title').textContent = `Run ${id}`
+      document.querySelector('#selected-run-meta').textContent = 'Loading selected run…'
+      renderList()
+    },
+    onSuccess: (run) => {
+      if (!run) throw new Error('Selected run was not found.')
+      displayedRun = run
+      updateStatus.hidden = true
+      document.querySelector('#selected-run-meta').textContent =
+        `${run.length.toLocaleString('en-US')} steps · ${anomalyCount(run)} flagged points`
+      document.querySelector('#run-announcement').textContent = `Run ${run.id} selected`
+      renderMetrics(run)
+      renderCharts(run)
+    },
+    onError: (exception) => {
+      updateStatus.hidden = false
+      updateStatus.textContent = exception instanceof Error ? exception.message : 'Run update failed.'
+    },
+  },
+)
 
 function renderList() {
   const runs = filterAndSortRuns(sanitizedRuns, filter.value, sort, direction)
@@ -113,7 +148,7 @@ function renderList() {
   runCount.textContent = `${runs.length} of ${sanitizedRuns.length}`
   empty.hidden = runs.length !== 0
   list.querySelectorAll('[data-run-id]').forEach((button) => {
-    button.addEventListener('click', () => selectRun(Number(button.dataset.runId)))
+    button.addEventListener('click', () => selectionController.select(Number(button.dataset.runId)))
   })
 }
 
@@ -171,20 +206,6 @@ function renderCharts(run) {
   })
 }
 
-function selectRun(id) {
-  selectedRun = sanitizedRuns.find((run) => run.id === id) || null
-  if (!selectedRun) return
-  document.querySelector('#detail-empty').hidden = true
-  document.querySelector('#run-detail').hidden = false
-  document.querySelector('#selected-run-title').textContent = `Run ${selectedRun.id}`
-  document.querySelector('#selected-run-meta').textContent =
-    `${selectedRun.length.toLocaleString('en-US')} steps · ${anomalyCount(selectedRun)} flagged points`
-  document.querySelector('#run-announcement').textContent = `Run ${selectedRun.id} selected`
-  renderList()
-  renderMetrics(selectedRun)
-  renderCharts(selectedRun)
-}
-
 function showError(exception) {
   loading.hidden = true
   content.hidden = true
@@ -202,12 +223,11 @@ function loadDashboard() {
   requestAnimationFrame(() => {
     try {
       sanitizedRuns = sanitizeDataset(generateDataset())
-      selectedRun = sanitizedRuns[0]
       loading.hidden = true
       content.hidden = false
       status.textContent = `${sanitizedRuns.length} runs ready`
       renderList()
-      selectRun(selectedRun.id)
+      selectionController.select(sanitizedRuns[0].id)
     } catch (exception) {
       showError(exception)
     }
@@ -227,7 +247,7 @@ directionButton.addEventListener('click', () => {
 })
 document.querySelector('#retry-button').addEventListener('click', loadDashboard)
 window.addEventListener('resize', () => {
-  if (selectedRun && !content.hidden) renderCharts(selectedRun)
+  if (displayedRun && !content.hidden) renderCharts(displayedRun)
 })
 
 loadDashboard()
