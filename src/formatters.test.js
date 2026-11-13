@@ -17,6 +17,10 @@ describe('deterministic formatters', () => {
     expect(formatUtcTime('2026-01-02T03:04:05.000Z')).toBe('Jan 02, 2026, 03:04:05 UTC')
   })
 
+  it('renders midnight as 00, never 24', () => {
+    expect(formatUtcTime('2026-01-02T00:04:05.000Z')).toBe('Jan 02, 2026, 00:04:05 UTC')
+  })
+
   it('keeps chart ticks round-trippable', () => {
     const tick = 0.00025
     expect(Number(formatTickNumber(tick))).toBe(tick)

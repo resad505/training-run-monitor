@@ -221,7 +221,7 @@ function loadDashboard() {
       sanitizedRuns = sanitizeDataset(generateDataset())
       loading.hidden = true
       content.hidden = false
-      status.textContent = `${formatInteger(sanitizedRuns.length)} runs ready · ${formatUtcTime(new Date())}`
+      status.textContent = `${formatInteger(sanitizedRuns.length)} runs ready · loaded ${formatUtcTime(new Date())}`
       renderList()
       selectionController.select(sanitizedRuns[0].id)
     } catch (exception) {
