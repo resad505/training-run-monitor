@@ -4,6 +4,7 @@ A dashboard for inspecting machine-learning training runs (`loss`, `lr`,
 `grad_norm`) that shows corrupted data as it is: NaN, Infinity, gaps,
 duplicates and spikes are flagged and drawn, never hidden or smoothed away.
 
+- Live: https://training-run-monitor-one.vercel.app/
 - Design decisions, trade-offs, edge cases and the limits of the tests:
   [ARCHITECTURE.md](ARCHITECTURE.md)
 
