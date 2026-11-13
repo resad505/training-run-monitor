@@ -1,0 +1,284 @@
+
+ RUN  v5.1.0 C:/Users/Resad/Desktop/My projects/soup-task
+
+ ✓ src/pipeline/prng.test.js > mulberry32 > returns floats in [0, 1)
+ ✓ src/pipeline/prng.test.js > mulberry32 > is deterministic — same seed produces the same sequence
+ ✓ src/pipeline/prng.test.js > mulberry32 > different seeds produce different sequences
+ ✓ src/pipeline/prng.test.js > mulberry32 > nextInt returns integers within [lo, hi]
+ ✓ src/pipeline/prng.test.js > mulberry32 > seed coerces to uint32 — negative and float seeds are stable
+ ✓ src/pipeline/prng.test.js > mulberry32 > produces reasonable statistical spread (chi-squared smoke test)
+ ✓ src/dashboard.test.js > dashboard helpers > sorts by anomaly count and filters by run id
+ ✓ src/dashboard.test.js > dashboard helpers > breaks sort ties by run id regardless of input order
+ ✓ src/dashboard.test.js > dashboard helpers > returns no runs when nothing matches the filter
+ ✓ src/dashboard.test.js > dashboard helpers > summarizes finite values and reports how many were non-finite
+ ✓ src/dashboard.test.js > dashboard helpers > never reports 0 for a metric with no finite values
+ ✓ src/dashboard.test.js > dashboard helpers > counts flagged points
+ ✓ src/dashboard.test.js > dashboard helpers > counts every anomaly kind, including non-finite points
+ ✓ src/dashboard.test.js > dashboard helpers > moves run list focus with arrow, Home and End keys
+ ✓ src/dashboard.test.js > chart mode helpers > counts only finite values a log axis cannot place
+ ✓ src/dashboard.test.js > chart mode helpers > says when no smoothing is applied
+ ✓ src/dashboard.test.js > chart mode helpers > names the smoothing weight
+ ✓ src/dashboard.test.js > chart mode helpers > reports how many values a log axis leaves out
+ ✓ src/dashboard.test.js > chart mode helpers > offers a smoothing range that includes "off" and never reaches 1
+ ✓ src/contrast.test.js > WCAG AA contrast > computes the reference ratios correctly
+ ✓ src/contrast.test.js > WCAG AA contrast > body text on page reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > headings on page reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > muted text on card reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > muted text on page reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > status chip reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > button label reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > anomaly badge reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > clean badge reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > stale indicator reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > axis tick labels reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > NaN badge text reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > infinity badge text reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > log <= 0 badge text reaches 4.5:1
+ ✓ src/contrast.test.js > WCAG AA contrast > focus ring on card reaches 3:1
+ ✓ src/contrast.test.js > WCAG AA contrast > focus ring on page reaches 3:1
+ ✓ src/contrast.test.js > WCAG AA contrast > input border reaches 3:1
+ ✓ src/contrast.test.js > WCAG AA contrast > smoothed line reaches 3:1
+ ✓ src/contrast.test.js > WCAG AA contrast > anomaly diamond reaches 3:1
+ ✓ src/benchmark.test.js > downsample benchmark harness > uses the same metrics for object and typed worker paths
+ ✓ src/benchmark.test.js > downsample benchmark harness > does not detach or mutate caller-owned typed arrays
+ ✓ src/benchmark.test.js > downsample benchmark harness > can benchmark the same input twice without detached buffers
+ ✓ src/benchmark.test.js > downsample benchmark harness > converts the before path to object arrays without changing output
+ ✓ src/run-loader.test.js > run selection controller > does not paint a superseded result
+ ✓ src/run-loader.test.js > run selection controller > aborts the previous loader when selection changes
+ ✓ src/run-loader.test.js > run selection controller — failure and ordering > ignores a slow earlier run that resolves after the newer one
+ ✓ src/run-loader.test.js > run selection controller — failure and ordering > reports where the selection points before any data arrives
+ ✓ src/run-loader.test.js > run selection controller — failure and ordering > surfaces a failed load of the current selection
+ ✓ src/run-loader.test.js > run selection controller — failure and ordering > does not surface a failure from a superseded load
+ ✓ src/run-loader.test.js > run selection controller — failure and ordering > paints nothing after cancel
+ ✓ src/run-loader.test.js > the race the controller guards against > is reproduced by an unguarded loader: the slow first run paints last
+ ✓ src/perf.test.js > perf instrumentation > summarises samples with nearest-rank percentiles
+ ✓ src/perf.test.js > perf instrumentation > handles a single sample
+ ✓ src/perf.test.js > perf instrumentation > times a function and returns its result
+ ✓ src/perf.test.js > perf instrumentation > records the duration even when the function throws
+ ✓ src/perf.test.js > perf instrumentation > records a milestone only once
+ ✓ src/perf.test.js > perf instrumentation > keeps a bounded number of samples
+ ✓ src/perf.test.js > perf instrumentation > resets one name or everything
+ ✓ src/perf.test.js > perf instrumentation > installs a reader on the given target
+ ✓ src/chart/scale.test.js > formatTickNumber — round-trip guarantee > round-trips integers
+ ✓ src/chart/scale.test.js > formatTickNumber — round-trip guarantee > round-trips decimal fractions
+ ✓ src/chart/scale.test.js > formatTickNumber — round-trip guarantee > round-trips scientific notation for very small/large numbers
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > projects in-domain values correctly
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > handles inverted ranges (typical for Canvas Y axis)
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > never returns non-finite coordinates for non-finite inputs
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > isPlottable reports truthfulness
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > inverts pixels back to domain values
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > ticks lie strictly within domain bounds
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > tick labels round-trip to the tick value
+ ✓ src/chart/scale.test.js > createLinearScale — Issue #12 > handles zero-span domain without dividing by zero
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > projects positive values logarithmically
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > CRITICAL: values <= 0 are reported as not plottable and return null, never silently clamped
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > never returns non-finite coordinates for NaN, Infinity, -Infinity
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > inverts pixels back to positive domain values
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > ticks lie strictly within domain bounds
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > tick labels round-trip to the tick value
+ ✓ src/chart/scale.test.js > createLogScale — Issue #12 > narrow log domain produces intermediate sub-ticks
+ ✓ src/chart/scale.test.js > scale hardening > scientific-notation labels round-trip exactly
+ ✓ src/chart/scale.test.js > scale hardening > round-trips random values across magnitudes
+ ✓ src/chart/scale.test.js > scale hardening > log scale rejects a non-positive domain instead of substituting one
+ ✓ src/chart/scale.test.js > scale hardening > linear scale rejects a non-finite domain
+ ✓ src/chart/scale.test.js > scale hardening > narrow log domains still get in-domain ticks
+ ✓ src/counter.test.js > setupCounter > initializes and increments the counter
+ ✓ src/chart/interaction.test.js > binarySearchNearest > finds exact matches
+ ✓ src/chart/interaction.test.js > binarySearchNearest > finds nearest index for values between steps
+ ✓ src/chart/interaction.test.js > formatMetricValue — Truthful representations > formats non-finite values explicitly without concealing
+ ✓ src/chart/interaction.test.js > formatMetricValue — Truthful representations > formats finite numbers cleanly
+ ✓ src/chart/interaction.test.js > createViewState — Zoom, Pan, Reset > initializes to full range
+ ✓ src/chart/interaction.test.js > createViewState — Zoom, Pan, Reset > pans within bounds
+ ✓ src/chart/interaction.test.js > createViewState — Zoom, Pan, Reset > zooms centered around target step
+ ✓ src/chart/interaction.test.js > createViewState — Zoom, Pan, Reset > resets back to full range
+ ✓ src/chart/interaction.test.js > inspectRawPoint — Issue #15 acceptance criteria > CRITICAL: reports the RAW value, not the decimated one
+ ✓ src/chart/interaction.test.js > inspectRawPoint — Issue #15 acceptance criteria > reports the raw min/max of every point under the pixel (spike next to cursor)
+ ✓ src/chart/interaction.test.js > inspectRawPoint — Issue #15 acceptance criteria > inspectRawPoint returns null for invalid coordinates
+ ✓ src/chart/interaction.test.js > describeAnomaly > decodes the sanitizer bitmask into names
+ ✓ src/chart/interaction.test.js > attachInteractions — keyboard inspection > Shift+Arrow steps through raw points and announces them
+ ✓ src/chart/interaction.test.js > attachInteractions — keyboard inspection > ] and [ jump between anomalies; Escape clears
+ ✓ src/chart/interaction.test.js > attachInteractions — keyboard inspection > wires the live region to the canvas
+ ✓ src/chart/interaction.test.js > attachInteractions — Accessibility & Keyboard Controls > sets accessible role, tabindex, and aria-label on canvas
+ ✓ src/chart/interaction.test.js > describePoint — deterministic number formatting > groups large step numbers and counts the en-US way
+ ✓ src/chart/interaction.test.js > describePoint — deterministic number formatting > names non-finite values instead of printing a number
+ ✓ src/chart/interaction.test.js > renderCrosshairOverlay — tooltip placement > keeps a long label that flips left inside the plot, step first
+ ✓ src/chart/interaction.test.js > renderCrosshairOverlay — tooltip placement > draws nothing without a crosshair
+ ✓ src/chart/interaction.test.js > attachInteractions — pointer and wheel behaviour > routes wheel, hover and pointer-leave through the scheduler, not the synchronous render
+ ✓ src/chart/interaction.test.js > attachInteractions — pointer and wheel behaviour > falls back to the synchronous render when no scheduler is given
+ ✓ src/chart/interaction.test.js > attachInteractions — pointer and wheel behaviour > keeps the step under the cursor fixed across wheel events between redraws
+ ✓ src/chart/interaction.test.js > attachInteractions — pointer and wheel behaviour > drag pans by the distance the pointer travelled, not a compounding amount
+ ✓ src/chart/interaction.test.js > attachInteractions — pointer and wheel behaviour > hover inspects the raw point under the cursor
+ ✓ src/formatters.test.js > deterministic formatters > uses en-US grouping and preserves non-finite labels
+ ✓ src/formatters.test.js > deterministic formatters > formats integers consistently
+ ✓ src/formatters.test.js > deterministic formatters > renders UTC with an explicit suffix
+ ✓ src/formatters.test.js > deterministic formatters > renders midnight as 00, never 24
+ ✓ src/formatters.test.js > deterministic formatters > keeps chart ticks round-trippable
+ ✓ src/formatters.test.js > formatter edge cases > labels non-finite integers instead of printing 0 or a blank
+ ✓ src/formatters.test.js > formatter edge cases > keeps a real zero distinguishable from missing data
+ ✓ src/formatters.test.js > formatter edge cases > labels an unparseable time
+ ✓ src/formatters.test.js > formatter edge cases > renders the same instant identically whatever offset it was written in
+ ✓ src/formatters.test.js > formatter edge cases > round-trips ticks across magnitudes
+ ✓ src/formatters.test.js > single formatter module > finds the source files
+ ✓ src/formatters.test.js > single formatter module > ./benchmark.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/downsample.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/downsample.worker.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/index.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/interaction.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/renderer.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/scale.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./chart/worker-downsample.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./counter.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./dashboard.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./dataset-loader.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./main.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./perf.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./pipeline/dataset-plan.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./pipeline/dataset.worker.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./pipeline/generator.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./pipeline/prng.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./pipeline/sanitizer.js formats nothing on its own
+ ✓ src/formatters.test.js > single formatter module > ./run-loader.js formats nothing on its own
+ ✓ src/pipeline/generator.test.js > generateRun — determinism > same id + seed → identical output
+ ✓ src/pipeline/generator.test.js > generateRun — determinism > different ids → different step sequences
+ ✓ src/pipeline/generator.test.js > generateRun — determinism > dataset generation order does not affect individual runs
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — output shape > returns id, length, steps, loss, lr, grad_norm, anomaly, collisions, gaps
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — output shape > steps, loss, lr, grad_norm are Float64Array; anomaly is Uint8Array
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — output shape > all buffers have the same length as result.length
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — output shape > id is passed through
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — output shape > collisions and gaps are non-negative integers
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — sort > step indices are in ascending order after sanitization
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — sort > already-sorted input is unchanged in order
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > removes exact duplicate step indices
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > last entry wins regardless of corrupt flag — corrupt last wins
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > last entry wins regardless of corrupt flag — clean last wins
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > collision is flagged as anomaly
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > collisions counter equals number of duplicate resolutions
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > no collision → collisions is 0
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — deduplication (last-write-wins) > real generator output length is <= raw length after dedup
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — gap detection > detects a gap and flags step after the gap as anomaly
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — gap detection > gaps counter equals number of gaps detected
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — gap detection > no gap → gaps is 0
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — gap detection > EXPECTED_STRIDE is documented as 1
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — gap detection > consecutive steps (stride 1) are not flagged as gaps
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > anomaly column contains only known flag bits
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > NaN loss is flagged as anomaly
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > Infinity loss is flagged as anomaly
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > -Infinity loss is flagged and preserved
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > corrupt-flagged step with normal finite loss is NOT flagged as anomaly by sanitizer
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > outlier beyond 3.5 robust σ is flagged
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > a small late spike on a decaying curve is flagged (trend-relative)
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > normal steps are not flagged as anomalies
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > 3+ identical consecutive losses are flagged as PLATEAU
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > two identical consecutive losses are not a plateau
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > real dataset has anomalies in every run (excluding 1M run for performance)
+ ✓ src/chart/renderer.test.js > setupCanvas — High-DPI support > configures canvas dimensions and backing-store scale for dpr=2
+ ✓ src/chart/renderer.test.js > computeEMA — Smoothing > resets EMA across non-finite points to avoid false interpolation
+ ✓ src/chart/renderer.test.js > computeEMA — Smoothing > resets EMA across step gaps
+ ✓ src/chart/renderer.test.js > renderChart — Issue #14 & GATE acceptance criteria > CRITICAL GATE: no non-finite coordinate ever reaches lineTo or moveTo
+ ✓ src/chart/renderer.test.js > renderChart — Issue #14 & GATE acceptance criteria > path breaks at non-finite points and step gaps
+ ✓ src/chart/renderer.test.js > renderChart — Issue #14 & GATE acceptance criteria > CRITICAL GATE: 1M spike is visible at full zoom-out
+ ✓ src/pipeline/generator.test.js > generateRun — determinism > custom rootSeed produces a different dataset
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (a) the 1M-point spike survives decimation > holds on the main-thread path across zoom windows
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (a) the 1M-point spike survives decimation > holds on the Web Worker path across zoom windows
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (a) the 1M-point spike survives decimation > fails when buckets are averaged
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (a) the 1M-point spike survives decimation > fails when every n-th point is sampled
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (b) NaN and Infinity are never coerced or smoothed over > holds for every generated run
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (b) NaN and Infinity are never coerced or smoothed over > fails when the sanitizer coerces non-finite values to 0
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (b) NaN and Infinity are never coerced or smoothed over > fails when the downsampler drops non-finite points
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (b) NaN and Infinity are never coerced or smoothed over > fails when smoothing bridges missing data
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (c) unsorted and duplicate steps normalise to the clean series > holds for every generated run
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (c) unsorted and duplicate steps normalise to the clean series > fails without the sort
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (c) unsorted and duplicate steps normalise to the clean series > fails when the first duplicate wins instead of the last
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (d) axis tick labels match the data bounds > holds for every metric
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (d) axis tick labels match the data bounds > fails when ticks overshoot the data
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (d) axis tick labels match the data bounds > fails when labels are rounded
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (d) axis tick labels match the data bounds > fails when the domain is padded away from the data
+ ✓ test/truthfulness.test.js > truthfulness proofs (generator -> sanitizer -> chart) > (d) axis tick labels match the data bounds > holds for the labels the renderer actually draws
+ ✓ src/pipeline/generator.test.js > generateDataset — shape > produces exactly 20 runs
+ ✓ src/pipeline/generator.test.js > generateDataset — shape > assigns consecutive ids 0–19
+ ✓ src/pipeline/generator.test.js > generateDataset — shape > each run has the expected seed property
+ ✓ src/pipeline/generator.test.js > generateDataset — shape > runs 0–18 have at least STEPS_PER_RUN entries (duplicates may add more)
+ ✓ src/pipeline/generator.test.js > generateDataset — shape > run 19 has exactly LARGE_RUN_STEPS (1,000,000) steps (before corruption expansion)
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > every step has the required keys: step, loss, lr, grad_norm, corrupt
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > step indices start at 0
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > non-corrupt loss values are finite and non-negative
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > non-corrupt lr values are finite and positive
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > non-corrupt grad_norm values are finite and non-negative
+ ✓ src/pipeline/generator.test.js > generateRun — step structure > no step has an accuracy field
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > every run contains at least some corrupt steps
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > corrupt steps include dropout (NaN) in at least one run across runs 0–18
+ ✓ src/chart/downsample.test.js > binarySearch helpers > binarySearchFirstGe finds exact and upper bounds
+ ✓ src/chart/downsample.test.js > binarySearch helpers > binarySearchLastLe finds exact and lower bounds
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > global min and max of any window survive for any target width
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > CRITICAL: 1M-point outlier spike survives decimation across multiple zoom windows
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > non-finite points (NaN, Infinity, -Infinity) are never coerced to 0 or merged into buckets
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > step gaps are not merged into a continuous line
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > output size has a documented upper bound
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > handles empty input gracefully
+ ✓ src/chart/downsample.test.js > downsample — Issue #13 acceptance criteria > window out of bounds returns empty output
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > gapBefore is set only where the source data has a real step gap
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > breakBefore is rare on clean data (decimated neighbours are not gaps)
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > breaks before and after a non-finite point
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > every anomalous point in the window survives
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > index maps each output point back to its source
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > envelope starts a new polygon at every segment
+ ✓ src/chart/downsample.test.js > downsample — explicit break flags > respects the documented bound on adversarial input
+ ✓ src/chart/renderer.test.js > renderChart — Issue #14 & GATE acceptance criteria > zoomed-out 1M run is one continuous line, not shaded as gaps
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > corrupt steps include spikes (loss >> normal) in at least one run
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > anomaly bitmask (OUTLIER = 2) draws a diamond
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > envelope is filled per segment, never across a gap
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > smoothed curve is computed on raw data and does not change with zoom
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > negative values stay inside the plot (no clamp at 0)
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > log scale marks finite values <= 0 as not plottable
+ ✓ src/chart/renderer.test.js > renderChart — markers, envelope, smoothing, axes > data drawing is clipped to the plot area
+ ✓ src/chart/renderer.test.js > renderChart — user-selectable scale and smoothing > log scale: zeros and negatives are marked, never clamped onto the axis
+ ✓ src/chart/renderer.test.js > renderChart — user-selectable scale and smoothing > log scale: the line is broken at an unplottable value, not drawn through it
+ ✓ src/chart/renderer.test.js > renderChart — user-selectable scale and smoothing > smoothing 0 draws the raw series only
+ ✓ src/chart/renderer.test.js > renderChart — user-selectable scale and smoothing > changing the smoothing weight changes the curve and is reversible
+ ✓ src/chart/renderer.test.js > renderChart — user-selectable scale and smoothing > smoothing never alters the raw values that are drawn
+ ✓ src/chart/renderer.test.js > renderChart — decimation is reused only when its inputs are unchanged > reuses the result for a crosshair-only, scale-only or smoothing-only redraw
+ ✓ src/chart/renderer.test.js > renderChart — decimation is reused only when its inputs are unchanged > recomputes when the window or the width changes
+ ✓ src/chart/renderer.test.js > renderChart — decimation is reused only when its inputs are unchanged > a reused result is identical to a fresh decimation, spike included
+ ✓ src/chart/renderer.test.js > renderChart — decimation is reused only when its inputs are unchanged > never serves one series the decimation of another
+ ✓ src/chart/renderer.test.js > renderChart — decimation is reused only when its inputs are unchanged > does not reuse a result when only the anomaly flags differ
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — anomaly flagging > OUTLIER_THRESHOLD and PLATEAU_MIN_RUN are exported
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — truthfulness > output does not depend on the generator corrupt label
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — truthfulness > every injected event in the manifest is flagged
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — truthfulness > no clean (un-injected) step is flagged
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — truthfulness > flags the documented spike in the 1M-point run quickly and without noise
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — NaN preservation > NaN loss is preserved in the output loss buffer
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — NaN preservation > NaN does not corrupt the step index
+ ✓ src/pipeline/sanitizer.test.js > sanitizeDataset > returns one result per input run
+ ✓ src/pipeline/sanitizer.test.js > sanitizeDataset > ids match the input run ids
+ ✓ src/pipeline/sanitizer.test.js > sanitizeDataset > each result has at least STEPS_PER_RUN - 5 steps (dedup may remove a few)
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — determinism > same run produces identical sanitized output
+ ✓ src/pipeline/sanitizer.test.js > sanitizeRun — shuffle-equivalence > shuffled + duplicated input produces output identical to clean sorted input
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > corrupt flag is a boolean
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > every corruption kind appears in the standard dataset
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > infinity events set loss to ±Infinity
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > gap events leave a jump > 1 right after the recorded step
+ ✓ src/pipeline/generator.test.js > generateRun — corruption injection > unsorted events make arrival order non-monotonic
+ ✓ src/pipeline/generator.test.js > generateRun — manifest > returns a manifest array
+ ✓ src/pipeline/generator.test.js > generateRun — manifest > manifest entries have shape { kind, pos }
+ ✓ src/pipeline/generator.test.js > generateRun — manifest > manifest kind values are from the known KINDS set
+ ✓ src/pipeline/generator.test.js > generateRun — manifest > manifest pos values correspond to actual step indices in the run
+ ✓ src/pipeline/generator.test.js > generateRun — manifest > generateRun returns { id, seed, steps, manifest }
+ ✓ src/pipeline/generator.test.js > generateRun — large run (id 19) > run 19 in generateDataset has exactly LARGE_RUN_STEPS steps (before dup expansion)
+ ✓ src/pipeline/generator.test.js > generateRun — large run (id 19) > run 19 manifest includes a spike at LARGE_RUN_SPIKE_STEP
+ ✓ src/pipeline/generator.test.js > generateRun — large run (id 19) > run 19 step at LARGE_RUN_SPIKE_STEP is marked corrupt
+ ✓ src/dataset-loader.test.js > dataset plan > builds every run exactly once, the 1M-step run last
+ ✓ src/dataset-loader.test.js > dataset plan > lists each buffer of a run once for transfer
+ ✓ src/dataset-loader.test.js > dataset loader > forwards the request and delivers runs in arrival order
+ ✓ src/dataset-loader.test.js > dataset loader > reports a worker-side failure once and stops listening
+ ✓ src/dataset-loader.test.js > dataset loader > reports a crashed worker
+ ✓ src/dataset-loader.test.js > dataset loader > delivers nothing after cancel, so a retry cannot receive stale runs
+ ✓ src/dataset-loader.test.js > dataset loader > turns a handler that throws into an error instead of a half-painted page
+ ✓ src/dataset-loader.test.js > dataset loader > rejects a message it does not understand
+ ✓ src/dataset-loader.test.js > dataset worker module > delivers the same data as building the dataset on the main thread
+ ✓ src/pipeline/generator.test.js > generateRun — performance > generates a 1 000 000-step run in under 5 s
+
+ Test Files  16 passed (16)
+      Tests  275 passed (275)
+   Start at  20:10:53
+   Duration  2.34s (tests 73%, import 21%, transform 5%, worker 1%)
+
