@@ -22,6 +22,10 @@ import {
 } from './dashboard.js'
 import { createRunSelectionController } from './run-loader.js'
 import { formatInteger, formatNumber, formatUtcTime } from './formatters.js'
+import * as perf from './perf.js'
+
+perf.install(window)
+perf.observeLongTasks()
 
 const app = document.querySelector('#app')
 let interactions = []
@@ -171,8 +175,9 @@ const selectionController = createRunSelectionController(
         `${formatInteger(run.length)} steps · ${formatInteger(anomalyCount(run))} flagged points`
       renderAnomalySummary(run)
       renderMetrics(run)
-      renderCharts(run)
+      perf.timed('render-run', () => renderCharts(run))
       setStale(false)
+      perf.milestone('first-render')
       document.querySelector('#run-announcement').textContent =
         `Run ${formatInteger(run.id)} selected, ${formatInteger(anomalyCount(run))} flagged points`
     },
@@ -258,7 +263,7 @@ function renderCharts(run) {
     const mode = chartPanels.querySelector(`[data-mode="${metric}"]`)
     const nonPositive = countNonPositive(run[metric])
     let scales = null
-    const redraw = () => {
+    const redraw = () => perf.timed('redraw', () => {
       mode.textContent = describeChartMode(
         { scaleType, smoothing, nonPositive },
         { integer: formatInteger, number: formatNumber },
@@ -279,7 +284,7 @@ function renderCharts(run) {
         theme: 'light',
       })
       renderCrosshairOverlay(ctx, interactions.find((item) => item.canvas === canvas)?.getCrosshair(), scales.xScale, scales.yScale, scales.margins, scales.plotW, scales.plotH)
-    }
+    })
     redraw()
     const control = attachInteractions(canvas, {
       rawSeries: series,
@@ -332,7 +337,7 @@ function loadDashboard() {
   // generation waits one more task to let the loading state reach the screen.
   const start = () => {
     try {
-      sanitizedRuns = sanitizeDataset(generateDataset())
+      sanitizedRuns = perf.timed('dataset-build', () => sanitizeDataset(generateDataset()))
       loading.hidden = true
       content.hidden = false
       status.textContent = `${formatInteger(sanitizedRuns.length)} runs ready · loaded ${formatUtcTime(new Date())}`
